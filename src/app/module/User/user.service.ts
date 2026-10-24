@@ -4,7 +4,7 @@
 import httpStatus from "http-status";
 import QueryBuilder from "../../builder/QueryBuilder";
 import AppError from "../../errors/AppError";
-import { NotificationService } from "../Notification/notification.service";
+import { NotificationCreators } from "../Notification/notificationHelpers";
 import { User } from "./user.model";
 import { UserSearchableFields } from "./user.utils";
 import mongoose, { Types } from "mongoose";
@@ -131,16 +131,7 @@ const followUser = async (userId: Types.ObjectId, followedUserId: Types.ObjectId
     // Notify the followed user (fire-and-forget after transaction committed).
     void (async () => {
       try {
-        await NotificationService.createNotificationIntoDB({
-          recipient: String(followedUser._id),
-          actor: String(user._id),
-          type: "user.followed",
-          title: "Someone started following you",
-          body: `${user.name} started following you.`,
-          link: `/users/${String(followedUser._id)}`,
-          entityType: "user",
-          entityId: String(followedUser._id),
-        });
+        await NotificationCreators.newFollower(String(followedUser._id), String(user._id), user.name);
       } catch {
         /* never block */
       }

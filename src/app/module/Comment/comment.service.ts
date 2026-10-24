@@ -10,7 +10,7 @@ import mongoose, { Types } from "mongoose";
 import { assertCanInteractWithPost, assertCanViewPost } from "../Post/postAccess";
 import { Short } from "../Short/short.model";
 import { ShortService } from "../Short/short.service";
-import { NotificationService } from "../Notification/notification.service";
+import { NotificationCreators } from "../Notification/notificationHelpers";
 
 type TRequester = { id: string; role: string };
 type TCommentSortMode = "TOP" | "NEWEST" | "OLDEST";
@@ -78,16 +78,14 @@ const addCommentIntoDB = async (payload: Partial<IComment>, userId: string, requ
         try {
           const postDoc = await Post.findById(payload.post).select("user title").lean();
           if (postDoc) {
-            await NotificationService.createNotificationIntoDB({
-              recipient: String(postDoc.user),
-              actor: userId,
-              type: "post.commented",
-              title: "Someone commented on your post",
-              body: typeof payload.text === "string" ? payload.text.slice(0, 120) : undefined,
-              link: `/posts/${String(payload.post)}`,
-              entityType: "post",
-              entityId: String(payload.post),
-            });
+            const commenter = await User.findById(userId).select("name").lean();
+            await NotificationCreators.postComment(
+              String(postDoc.user),
+              userId,
+              commenter?.name || "Someone",
+              String(payload.post),
+              String(comment[0]._id),
+            );
           }
         } catch {
           /* never block */
@@ -116,16 +114,14 @@ const addCommentIntoDB = async (payload: Partial<IComment>, userId: string, requ
     try {
       const postDoc = await Post.findById(payload.post).select("user title").lean();
       if (postDoc) {
-        await NotificationService.createNotificationIntoDB({
-          recipient: String(postDoc.user),
-          actor: userId,
-          type: "post.commented",
-          title: "Someone commented on your post",
-          body: typeof payload.text === "string" ? payload.text.slice(0, 120) : undefined,
-          link: `/posts/${String(payload.post)}`,
-          entityType: "post",
-          entityId: String(payload.post),
-        });
+        const commenter = await User.findById(userId).select("name").lean();
+        await NotificationCreators.postComment(
+          String(postDoc.user),
+          userId,
+          commenter?.name || "Someone",
+          String(payload.post),
+          String(comment._id),
+        );
       }
     } catch {
       /* never block */
@@ -548,16 +544,16 @@ const replyToCommentFromDB = async (
   // Notify the parent comment author about the reply (fire-and-forget).
   void (async () => {
     try {
-      await NotificationService.createNotificationIntoDB({
-        recipient: String(comment.user),
-        actor: id,
-        type: "comment.replied",
-        title: "Someone replied to your comment",
-        body: typeof replyData.text === "string" ? replyData.text.slice(0, 120) : undefined,
-        link: comment.post ? `/posts/${String(comment.post)}` : null,
-        entityType: "comment",
-        entityId: String(comment._id),
-      });
+      const post = comment.post ? await Post.findById(String(comment.post)).select("title").lean() : null;
+      const replier = await User.findById(id).select("name").lean();
+      await NotificationCreators.postCommentReply(
+        String(comment.user),
+        id,
+        replier?.name || "Someone",
+        post ? String(comment.post) : "",
+        String(comment._id),
+        String(reply._id),
+      );
     } catch {
       /* never block */
     }

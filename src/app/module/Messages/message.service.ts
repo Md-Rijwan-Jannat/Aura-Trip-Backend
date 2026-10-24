@@ -14,9 +14,11 @@ import { Message } from "./message.model";
 import { Chat } from "../Chat/chat.model";
 import { Group } from "../Group/group.model";
 import { GroupMembership } from "../Group/groupMembership.model";
+import { User } from "../User/user.model";
 import { GROUP_MEMBERSHIP_STATUS } from "../Group/group.constants";
 import { REACTION_TYPES, TReactionType } from "../Reacts/react.interface";
 import { emitToUser, emitToUsers } from "../../utils/socketRegistry";
+import { NotificationCreators } from "../Notification/notificationHelpers";
 
 type TRequester = { id: string; role: string };
 
@@ -29,14 +31,10 @@ const getAccessibleChat = async (
   isGroupChat?: boolean;
 } | null> => {
   // groupCommunity must be selected: group messaging policy checks depend on it.
-  const chat = await Chat.findById(chatId).select(
-    "users groupCommunity groupAdmin isGroupChat",
-  );
+  const chat = await Chat.findById(chatId).select("users groupCommunity groupAdmin isGroupChat");
   if (!chat) return null;
 
-  const isMember = (chat.users ?? []).some(
-    (u) => String(u) === requester.id,
-  );
+  const isMember = (chat.users ?? []).some((u) => String(u) === requester.id);
   // Non-members get the same 404 as a missing chat so the endpoint does not
   // reveal which chat IDs exist.
   if (!isMember && requester.role !== "ADMIN") return null;
@@ -45,51 +43,33 @@ const getAccessibleChat = async (
 };
 
 /** Enforce the per-type content rules before anything touches the database. */
-const validateTypedPayload = (
-  messageType: TMessageType,
-  payload: Partial<IMessage>,
-): void => {
+const validateTypedPayload = (messageType: TMessageType, payload: Partial<IMessage>): void => {
   const content = typeof payload.content === "string" ? payload.content.trim() : "";
 
   switch (messageType) {
     case MESSAGE_TYPE.TEXT:
       if (!content || content.length > 5000) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Text messages require non-empty content under 5000 characters",
-        );
+        throw new AppError(httpStatus.BAD_REQUEST, "Text messages require non-empty content under 5000 characters");
       }
       break;
     case MESSAGE_TYPE.EMOJI:
       if (!content || content.length > 16) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Emoji messages require 1-16 characters of content",
-        );
+        throw new AppError(httpStatus.BAD_REQUEST, "Emoji messages require 1-16 characters of content");
       }
       break;
     case MESSAGE_TYPE.IMAGE:
     case MESSAGE_TYPE.VIEW_ONCE_IMAGE:
       if (!payload.mediaUrl) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Image messages require a mediaUrl",
-        );
+        throw new AppError(httpStatus.BAD_REQUEST, "Image messages require a mediaUrl");
       }
       break;
     case MESSAGE_TYPE.VOICE: {
       if (!payload.mediaUrl) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Voice messages require a mediaUrl",
-        );
+        throw new AppError(httpStatus.BAD_REQUEST, "Voice messages require a mediaUrl");
       }
       const duration = payload.mediaMeta?.durationSeconds;
       if (typeof duration !== "number" || duration < 1 || duration > 600) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Voice messages require mediaMeta.durationSeconds between 1 and 600",
-        );
+        throw new AppError(httpStatus.BAD_REQUEST, "Voice messages require mediaMeta.durationSeconds between 1 and 600");
       }
       break;
     }
@@ -105,10 +85,7 @@ const validateTypedPayload = (
         location.lng < -180 ||
         location.lng > 180
       ) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Location messages require valid lat/lng coordinates",
-        );
+        throw new AppError(httpStatus.BAD_REQUEST, "Location messages require valid lat/lng coordinates");
       }
       break;
     }
@@ -121,10 +98,7 @@ const validateTypedPayload = (
  * Project raw reaction entries into counts + the viewer's own reaction.
  * The raw user list never leaves the server — only aggregates do.
  */
-const summarizeReactions = (
-  raw: unknown,
-  viewerId?: string,
-): TMessageReactionSummary => {
+const summarizeReactions = (raw: unknown, viewerId?: string): TMessageReactionSummary => {
   const counts: Partial<Record<TReactionType, number>> = {};
   let total = 0;
   let myReaction: TReactionType | null = null;
@@ -132,10 +106,7 @@ const summarizeReactions = (
   if (Array.isArray(raw)) {
     for (const entry of raw) {
       const type = (entry as { type?: unknown })?.type;
-      if (
-        typeof type !== "string" ||
-        !(REACTION_TYPES as readonly string[]).includes(type)
-      ) {
+      if (typeof type !== "string" || !(REACTION_TYPES as readonly string[]).includes(type)) {
         continue;
       }
       total += 1;
@@ -158,19 +129,13 @@ const summarizeReactions = (
  * - the full document of a replied-to message (only a small preview),
  * - the raw reaction list (only an aggregate summary per viewer).
  */
-const sanitizeForRead = (
-  message: IMessage,
-  viewerId?: string,
-): TPublicMessage => {
+const sanitizeForRead = (message: IMessage, viewerId?: string): TPublicMessage => {
   const doc =
     typeof (message as { toObject?: () => IMessage }).toObject === "function"
       ? (message as { toObject: () => IMessage }).toObject()
       : { ...message };
 
-  const {
-    reactions: rawReactions,
-    ...base
-  } = doc as unknown as Record<string, unknown>;
+  const { reactions: rawReactions, ...base } = doc as unknown as Record<string, unknown>;
   const reactionSummary = summarizeReactions(rawReactions, viewerId);
 
   const rawReply = base.replyTo as
@@ -186,34 +151,22 @@ const sanitizeForRead = (
 
   const replyTo: TPublicMessage["replyTo"] = (() => {
     // Unpopulated references (chat-list projections) render as no preview.
-    if (
-      !rawReply ||
-      typeof rawReply !== "object" ||
-      !("content" in rawReply) ||
-      !("sender" in rawReply)
-    ) {
+    if (!rawReply || typeof rawReply !== "object" || !("content" in rawReply) || !("sender" in rawReply)) {
       return null;
     }
-    const senderRaw = rawReply.sender as
-      | { _id?: unknown; name?: string; image?: string | null }
-      | unknown;
+    const senderRaw = rawReply.sender as { _id?: unknown; name?: string; image?: string | null } | unknown;
     const senderObj =
-      senderRaw && typeof senderRaw === "object"
-        ? (senderRaw as { _id?: unknown; name?: string; image?: string | null })
-        : undefined;
+      senderRaw && typeof senderRaw === "object" ? (senderRaw as { _id?: unknown; name?: string; image?: string | null }) : undefined;
     return {
       _id: String(rawReply._id ?? ""),
       sender: {
         _id: String(senderObj?._id ?? ""),
         name: typeof senderObj?.name === "string" ? senderObj.name : "",
-        image:
-          typeof senderObj?.image === "string" ? senderObj.image : null,
+        image: typeof senderObj?.image === "string" ? senderObj.image : null,
       },
-      content:
-        typeof rawReply.content === "string" ? rawReply.content.slice(0, 300) : "",
+      content: typeof rawReply.content === "string" ? rawReply.content.slice(0, 300) : "",
       messageType:
-        typeof rawReply.messageType === "string" &&
-        rawReply.messageType in MESSAGE_TYPE
+        typeof rawReply.messageType === "string" && rawReply.messageType in MESSAGE_TYPE
           ? (rawReply.messageType as TMessageType)
           : MESSAGE_TYPE.TEXT,
       isDeleted: Boolean(rawReply.isDeleted),
@@ -272,19 +225,13 @@ const populateMessage = (message: IMessage) =>
   ]);
 
 // Create a new message (requester must be a participant of the target chat)
-const createMessageIntoDB = async (
-  payload: Partial<IMessage>,
-  requester: TRequester,
-): Promise<TPublicMessage> => {
+const createMessageIntoDB = async (payload: Partial<IMessage>, requester: TRequester): Promise<TPublicMessage> => {
   const chat = await getAccessibleChat(String(payload.chat), requester);
   if (!chat) {
     throw new AppError(httpStatus.NOT_FOUND, "Chat not found");
   }
 
-  const messageType: TMessageType =
-    payload.messageType && payload.messageType in MESSAGE_TYPE
-      ? payload.messageType
-      : MESSAGE_TYPE.TEXT;
+  const messageType: TMessageType = payload.messageType && payload.messageType in MESSAGE_TYPE ? payload.messageType : MESSAGE_TYPE.TEXT;
 
   const content = typeof payload.content === "string" ? payload.content.trim() : "";
   validateTypedPayload(messageType, { ...payload, content });
@@ -304,16 +251,12 @@ const createMessageIntoDB = async (
   // current membership (readBy/users are synced by the group module).
   const groupCommunity = (chat as { groupCommunity?: unknown }).groupCommunity;
   if (groupCommunity && String(groupCommunity) !== "null") {
-    const group = await Group.findById(String(groupCommunity))
-      .select("chatEnabled isDeleted name");
+    const group = await Group.findById(String(groupCommunity)).select("chatEnabled isDeleted name");
     if (!group || group.isDeleted) {
       throw new AppError(httpStatus.NOT_FOUND, "Chat not found");
     }
     if (!group.chatEnabled && requester.role !== "ADMIN") {
-      throw new AppError(
-        httpStatus.FORBIDDEN,
-        "Messaging is turned off for this group",
-      );
+      throw new AppError(httpStatus.FORBIDDEN, "Messaging is turned off for this group");
     }
     if (requester.role !== "ADMIN") {
       const membership = await GroupMembership.findOne({
@@ -337,21 +280,12 @@ const createMessageIntoDB = async (
     messageType,
     content,
     mediaUrl:
-      messageType === MESSAGE_TYPE.IMAGE ||
-      messageType === MESSAGE_TYPE.VOICE ||
-      messageType === MESSAGE_TYPE.VIEW_ONCE_IMAGE
+      messageType === MESSAGE_TYPE.IMAGE || messageType === MESSAGE_TYPE.VOICE || messageType === MESSAGE_TYPE.VIEW_ONCE_IMAGE
         ? payload.mediaUrl
         : null,
     mediaMeta: payload.mediaMeta ?? null,
-    location:
-      messageType === MESSAGE_TYPE.LOCATION ||
-      messageType === MESSAGE_TYPE.LIVE_LOCATION
-        ? payload.location
-        : null,
-    liveLocation:
-      messageType === MESSAGE_TYPE.LIVE_LOCATION
-        ? { expiresAt: new Date(Date.now() + LIVE_LOCATION_DURATION_MS) }
-        : null,
+    location: messageType === MESSAGE_TYPE.LOCATION || messageType === MESSAGE_TYPE.LIVE_LOCATION ? payload.location : null,
+    liveLocation: messageType === MESSAGE_TYPE.LIVE_LOCATION ? { expiresAt: new Date(Date.now() + LIVE_LOCATION_DURATION_MS) } : null,
     replyTo,
     readBy: [new Types.ObjectId(requester.id)],
   });
@@ -360,6 +294,74 @@ const createMessageIntoDB = async (
   await Chat.findByIdAndUpdate(payload.chat, {
     latestMessage: populated._id,
   });
+
+  // Fire-and-forget mention notifications (never throw - message creation must succeed)
+  void (async () => {
+    try {
+      const users = (chat.users ?? []).map((u) => String(u));
+      // Skip sender
+      const recipients = users.filter((u) => u !== requester.id);
+
+      if (recipients.length > 0) {
+        // Check for mentions in content
+        const mentionMatches = content.match(/@([a-zA-Z0-9_-]+)/g);
+        if (mentionMatches && recipients.length > 0) {
+          const mentionedUsernames = mentionMatches.map((m) => m.substring(1));
+          const mentionedUsers = await User.find({ name: { $in: mentionedUsernames } }, "_id name").lean();
+
+          const recipientUsernames = new Map<string, string>();
+          for (const u of mentionedUsers) {
+            recipientUsernames.set(u.name, String(u._id));
+          }
+
+          const sender = await User.findById(requester.id).select("name").lean();
+
+          for (const recipient of recipients) {
+            const user = mentionedUsers.find((u) => String(u._id) === recipient);
+            if (user) {
+              await NotificationCreators.messageMention(
+                recipient,
+                requester.id,
+                sender?.name || "Someone",
+                String(populated._id),
+                String(payload.chat),
+              );
+            } else {
+              // For group chats, send a generic group message notification if not mentioned
+              const isGroupChat = (chat as { isGroupChat?: boolean }).isGroupChat;
+              if (isGroupChat) {
+                await NotificationCreators.groupMessage(
+                  recipient,
+                  requester.id,
+                  sender?.name || "Someone",
+                  String(payload.chat),
+                  (chat as { chatName?: string }).chatName || "group",
+                );
+              }
+            }
+          }
+        } else {
+          // No mentions - send generic message for group chats
+          const isGroupChat = (chat as { isGroupChat?: boolean }).isGroupChat;
+          if (isGroupChat && recipients.length > 0) {
+            const sender = await User.findById(requester.id).select("name").lean();
+            for (const recipient of recipients) {
+              await NotificationCreators.groupMessage(
+                recipient,
+                requester.id,
+                sender?.name || "Someone",
+                String(payload.chat),
+                (chat as { chatName?: string }).chatName || "group",
+              );
+            }
+          }
+        }
+      }
+    } catch {
+      /* never block message creation */
+    }
+  })();
+
   return sanitizeForRead(populated as unknown as IMessage, requester.id);
 };
 
@@ -427,9 +429,7 @@ const getMessagesByChatId = async (
   if (paginated) {
     // Newest-first slice → return chronological for rendering.
     return {
-      messages: (await Promise.all(messages.reverse().map(async (m) =>
-        sanitizeForRead(m as unknown as IMessage, requester.id),
-      ))),
+      messages: await Promise.all(messages.reverse().map(async (m) => sanitizeForRead(m as unknown as IMessage, requester.id))),
       meta,
     };
   }
@@ -448,10 +448,7 @@ const getMessagesByChatId = async (
 };
 
 // Explicit mark-as-read (used when the client leaves the conversation).
-const markChatReadIntoDB = async (
-  chatId: string,
-  requester: TRequester,
-): Promise<{ updated: number }> => {
+const markChatReadIntoDB = async (chatId: string, requester: TRequester): Promise<{ updated: number }> => {
   const chat = await getAccessibleChat(chatId, requester);
   if (!chat) {
     throw new AppError(httpStatus.NOT_FOUND, "Chat not found");
@@ -464,10 +461,7 @@ const markChatReadIntoDB = async (
 };
 
 // Per-user unread count for one chat.
-const getUnreadCountForChat = async (
-  chatId: string,
-  requester: TRequester,
-): Promise<number> => {
+const getUnreadCountForChat = async (chatId: string, requester: TRequester): Promise<number> => {
   const chat = await getAccessibleChat(chatId, requester);
   if (!chat) {
     throw new AppError(httpStatus.NOT_FOUND, "Chat not found");
@@ -504,16 +498,10 @@ const editMessageIntoDB = async (
   if (updates.content !== undefined) {
     const content = updates.content.trim();
     if (messageType === MESSAGE_TYPE.TEXT && !content) {
-      throw new AppError(
-        httpStatus.BAD_REQUEST,
-        "Text messages require non-empty content",
-      );
+      throw new AppError(httpStatus.BAD_REQUEST, "Text messages require non-empty content");
     }
     if (messageType === MESSAGE_TYPE.EMOJI && (!content || content.length > 16)) {
-      throw new AppError(
-        httpStatus.BAD_REQUEST,
-        "Emoji messages require 1-16 characters of content",
-      );
+      throw new AppError(httpStatus.BAD_REQUEST, "Emoji messages require 1-16 characters of content");
     }
     if (content.length > 5000) {
       throw new AppError(httpStatus.BAD_REQUEST, "Content is too long");
@@ -523,10 +511,7 @@ const editMessageIntoDB = async (
 
   if (updates.location !== undefined) {
     if (messageType !== MESSAGE_TYPE.LOCATION) {
-      throw new AppError(
-        httpStatus.BAD_REQUEST,
-        "Only location messages can update coordinates",
-      );
+      throw new AppError(httpStatus.BAD_REQUEST, "Only location messages can update coordinates");
     }
     const { lat, lng, label } = updates.location;
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
@@ -543,9 +528,7 @@ const editMessageIntoDB = async (
   const sanitized = sanitizeForRead(populated as unknown as IMessage, requester.id);
 
   const chat = await Chat.findById(message.chat).select("users").lean();
-  const others = (chat?.users ?? [])
-    .map((u) => String(u))
-    .filter((u) => u !== requester.id);
+  const others = (chat?.users ?? []).map((u) => String(u)).filter((u) => u !== requester.id);
   if (others.length) {
     emitToUsers(others, "message edited", sanitized);
   }
@@ -558,10 +541,7 @@ const editMessageIntoDB = async (
  * only so read receipts/ids remain consistent. A group chat's latest-message
  * pointer is cleared so previews never show deleted content.
  */
-const deleteMessageIntoDB = async (
-  messageId: string,
-  requester: TRequester,
-): Promise<void> => {
+const deleteMessageIntoDB = async (messageId: string, requester: TRequester): Promise<void> => {
   const message = await Message.findById(messageId);
   if (!message) {
     throw new AppError(httpStatus.NOT_FOUND, "Message not found");
@@ -583,15 +563,10 @@ const deleteMessageIntoDB = async (
   message.reactions = [];
   await message.save();
 
-  await Chat.updateOne(
-    { _id: message.chat, latestMessage: message._id },
-    { $set: { latestMessage: null } },
-  );
+  await Chat.updateOne({ _id: message.chat, latestMessage: message._id }, { $set: { latestMessage: null } });
 
   const chat = await Chat.findById(message.chat).select("users").lean();
-  const others = (chat?.users ?? [])
-    .map((u) => String(u))
-    .filter((u) => u !== requester.id);
+  const others = (chat?.users ?? []).map((u) => String(u)).filter((u) => u !== requester.id);
   if (others.length) {
     emitToUsers(others, "message deleted", {
       _id: String(message._id),
@@ -623,10 +598,7 @@ const consumeViewOnceMediaFromDB = async (
     throw new AppError(httpStatus.NOT_FOUND, "Message not found");
   }
   if (String(message.sender) === requester.id) {
-    throw new AppError(
-      httpStatus.BAD_REQUEST,
-      "You already have this media — view-once is for the recipient",
-    );
+    throw new AppError(httpStatus.BAD_REQUEST, "You already have this media — view-once is for the recipient");
   }
 
   // Atomic single-consumption: only one request can win this transition.
@@ -647,10 +619,7 @@ const consumeViewOnceMediaFromDB = async (
   );
 
   if (!consumed) {
-    throw new AppError(
-      httpStatus.GONE,
-      "This view-once photo has already been opened",
-    );
+    throw new AppError(httpStatus.GONE, "This view-once photo has already been opened");
   }
   if (!consumed.mediaUrl) {
     throw new AppError(httpStatus.GONE, "Media is no longer available");
@@ -687,9 +656,7 @@ const getReactableMessage = async (
   if (!chat) {
     throw new AppError(httpStatus.NOT_FOUND, "Message not found");
   }
-  const members = (chat.users ?? []).map((u) =>
-    String((u as { _id?: unknown })?._id ?? u),
-  );
+  const members = (chat.users ?? []).map((u) => String((u as { _id?: unknown })?._id ?? u));
   const reqUserId = String(requester.id ?? "");
   if (!members.includes(reqUserId) && requester.role !== "ADMIN") {
     throw new AppError(httpStatus.FORBIDDEN, "You are not a member of this chat");
@@ -705,12 +672,7 @@ const getReactableMessage = async (
  * Every member receives their own summary: counts/total are identical but
  * `myReaction` differs per viewer, so the broadcast is per user.
  */
-const broadcastReactionUpdate = (
-  rawReactions: unknown,
-  chatId: string,
-  messageId: string,
-  members: string[],
-): void => {
+const broadcastReactionUpdate = (rawReactions: unknown, chatId: string, messageId: string, members: string[]): void => {
   for (const member of members) {
     const payload: TMessageReactionUpdate = {
       _id: messageId,
@@ -726,11 +688,7 @@ const broadcastReactionUpdate = (
  * an atomic pipeline: the user's previous entry is filtered out and the new
  * one appended, so rapid switching can never stack duplicates.
  */
-const reactToMessageIntoDB = async (
-  messageId: string,
-  type: TReactionType,
-  requester: TRequester,
-): Promise<TMessageReactionUpdate> => {
+const reactToMessageIntoDB = async (messageId: string, type: TReactionType, requester: TRequester): Promise<TMessageReactionUpdate> => {
   if (!(REACTION_TYPES as readonly string[]).includes(type)) {
     throw new AppError(httpStatus.BAD_REQUEST, "Unsupported reaction type");
   }
@@ -775,10 +733,7 @@ const reactToMessageIntoDB = async (
 };
 
 /** Remove the requester's reaction (idempotent — no reaction is a no-op). */
-const removeReactionFromMessageIntoDB = async (
-  messageId: string,
-  requester: TRequester,
-): Promise<TMessageReactionUpdate> => {
+const removeReactionFromMessageIntoDB = async (messageId: string, requester: TRequester): Promise<TMessageReactionUpdate> => {
   const target = await getReactableMessage(messageId, requester);
 
   const userObjectId = new Types.ObjectId(requester.id);
@@ -818,10 +773,7 @@ export const MessageServices = {
  * read-safe rules as the message endpoints (no view-once URLs, no deleted
  * content) before a chat document is returned to a client.
  */
-export const sanitizeChatLatestMessage = <T extends { latestMessage?: unknown }>(
-  chat: T,
-  viewerId?: string,
-): T => {
+export const sanitizeChatLatestMessage = <T extends { latestMessage?: unknown }>(chat: T, viewerId?: string): T => {
   const latest = chat.latestMessage as IMessage | null | undefined;
   if (latest && typeof latest === "object") {
     chat.latestMessage = sanitizeForRead(latest as IMessage, viewerId);

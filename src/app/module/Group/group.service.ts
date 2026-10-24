@@ -18,10 +18,11 @@ import {
   TGroupRole,
 } from "./group.constants";
 import { IGroup, TRequester } from "./group.interface";
-import { GroupPermissionService as GPerm } from "./group.permissions";
+import { GroupPermissionService as GPerm, IAccessContext } from "./group.permissions";
 import { Chat } from "../Chat/chat.model";
 import { User } from "../User/user.model";
-import { NotificationService } from "../Notification/notification.service";
+import { createNotification, NotificationCreators } from "../Notification/notificationHelpers";
+import { NOTIFICATION_TYPE } from "../Notification/notification.types";
 import { Post } from "../Post/post.model";
 import { removeUserFromRoom } from "../../utils/socketRegistry";
 
@@ -47,8 +48,7 @@ const uniqueSlug = async (base: string): Promise<string> => {
   return `${base}-${Date.now().toString(36)}`;
 };
 
-const escapeRegex = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Append-only audit trail. Never stores secrets — fire-and-forget. */
 const logGroupActivity = async (
@@ -89,11 +89,7 @@ const staffIdsOf = async (group: IGroup): Promise<string[]> => {
  * membership. Former members lose socket room access and message-fetch
  * access because every Chat/Message check is based on `Chat.users`.
  */
-const syncChatMembership = async (
-  group: IGroup,
-  userId: string,
-  op: "add" | "remove",
-): Promise<void> => {
+const syncChatMembership = async (group: IGroup, userId: string, op: "add" | "remove"): Promise<void> => {
   try {
     let chatId = group.chat;
     if (!chatId) {
@@ -103,9 +99,7 @@ const syncChatMembership = async (
     if (!chatId) return;
     await Chat.updateOne(
       { _id: chatId },
-      op === "add"
-        ? { $addToSet: { users: new Types.ObjectId(userId) } }
-        : { $pull: { users: new Types.ObjectId(userId) } },
+      op === "add" ? { $addToSet: { users: new Types.ObjectId(userId) } } : { $pull: { users: new Types.ObjectId(userId) } },
     );
     // Immediately drop any live room subscription of a removed/banned member.
     if (op === "remove") {
@@ -122,10 +116,7 @@ const syncChatMembership = async (
  * conversation even under concurrent first-clicks (the loser of the race
  * re-reads the winner's document).
  */
-const getOrCreateGroupConversation = async (
-  groupIdOrSlug: string,
-  requester: TRequester,
-) => {
+const getOrCreateGroupConversation = async (groupIdOrSlug: string, requester: TRequester) => {
   const { group } = await GPerm.authorize(groupIdOrSlug, requester, "group:chat");
 
   const existing = await Chat.findOne({ groupCommunity: group._id });
@@ -164,10 +155,7 @@ const getOrCreateGroupConversation = async (
 /* Create / read / update                                              */
 /* ------------------------------------------------------------------ */
 
-const createGroupIntoDB = async (
-  payload: Record<string, unknown>,
-  userId: string,
-): Promise<IGroup> => {
+const createGroupIntoDB = async (payload: Record<string, unknown>, userId: string): Promise<IGroup> => {
   const name = String(payload.name ?? "").trim();
   if (!name) throw new AppError(httpStatus.BAD_REQUEST, "Group name is required");
   if (!payload.description || !String(payload.description).trim()) {
@@ -189,14 +177,9 @@ const createGroupIntoDB = async (
     }
   }
 
-  const slug = requestedSlug
-    ? await uniqueSlug(requestedSlug)
-    : await uniqueSlug(buildSlug(name));
+  const slug = requestedSlug ? await uniqueSlug(requestedSlug) : await uniqueSlug(buildSlug(name));
 
-  const visibility =
-    payload.visibility === GROUP_VISIBILITY.PRIVATE
-      ? GROUP_VISIBILITY.PRIVATE
-      : GROUP_VISIBILITY.PUBLIC;
+  const visibility = payload.visibility === GROUP_VISIBILITY.PRIVATE ? GROUP_VISIBILITY.PRIVATE : GROUP_VISIBILITY.PUBLIC;
 
   const group = await Group.create({
     name,
@@ -208,14 +191,10 @@ const createGroupIntoDB = async (
     image: payload.image ?? null,
     coverImage: payload.coverImage ?? null,
     location: payload.location ?? null,
-    rules: Array.isArray(payload.rules)
-      ? (payload.rules as unknown[]).slice(0, 30).map((r) => String(r))
-      : [],
+    rules: Array.isArray(payload.rules) ? (payload.rules as unknown[]).slice(0, 30).map((r) => String(r)) : [],
     joinPolicy:
       payload.joinPolicy &&
-      Object.values(GROUP_JOIN_POLICY).includes(
-        payload.joinPolicy as (typeof GROUP_JOIN_POLICY)[keyof typeof GROUP_JOIN_POLICY],
-      )
+      Object.values(GROUP_JOIN_POLICY).includes(payload.joinPolicy as (typeof GROUP_JOIN_POLICY)[keyof typeof GROUP_JOIN_POLICY])
         ? payload.joinPolicy
         : visibility === GROUP_VISIBILITY.PRIVATE
           ? GROUP_JOIN_POLICY.REQUEST
@@ -263,10 +242,7 @@ const createGroupIntoDB = async (
   return group;
 };
 
-const getSingleGroupFromDB = async (
-  groupIdOrSlug: string,
-  requester: TRequester,
-): Promise<{ group: IGroup; membership: unknown }> => {
+const getSingleGroupFromDB = async (groupIdOrSlug: string, requester: TRequester): Promise<IAccessContext> => {
   const group = await GPerm.loadGroup(groupIdOrSlug);
   const membership = await GPerm.getMembership(group._id, requester.id);
   if (!GPerm.canViewGroup(group, membership, requester)) {
@@ -276,10 +252,7 @@ const getSingleGroupFromDB = async (
   return { group, membership };
 };
 
-const getAllGroupsFromDB = async (
-  query: Record<string, unknown>,
-  requester: TRequester,
-) => {
+const getAllGroupsFromDB = async (query: Record<string, unknown>, requester: TRequester) => {
   const myApprovedIds = await GroupMembership.find({
     user: requester.id,
     status: GROUP_MEMBERSHIP_STATUS.APPROVED,
@@ -293,9 +266,7 @@ const getAllGroupsFromDB = async (
   if (query.category) filter.category = query.category;
   if (
     query.visibility &&
-    Object.values(GROUP_VISIBILITY).includes(
-      query.visibility as (typeof GROUP_VISIBILITY)[keyof typeof GROUP_VISIBILITY],
-    )
+    Object.values(GROUP_VISIBILITY).includes(query.visibility as (typeof GROUP_VISIBILITY)[keyof typeof GROUP_VISIBILITY])
   ) {
     filter.visibility = query.visibility;
   }
@@ -319,13 +290,7 @@ const getAllGroupsFromDB = async (
     ];
   }
 
-  const qb = new QueryBuilder(
-    Group.find(filter).populate("owner", "name image email"),
-    query,
-  )
-    .sort()
-    .fields()
-    .paginate();
+  const qb = new QueryBuilder(Group.find(filter).populate("owner", "name image email"), query).sort().fields().paginate();
 
   if (query.tab === "popular" || query.sort === "popular") {
     qb.modelQuery = qb.modelQuery.sort("-memberCount");
@@ -353,11 +318,7 @@ const getAllGroupsFromDB = async (
   return { result: data, meta };
 };
 
-const updateGroupIntoDB = async (
-  groupIdOrSlug: string,
-  payload: Record<string, unknown>,
-  requester: TRequester,
-): Promise<IGroup> => {
+const updateGroupIntoDB = async (groupIdOrSlug: string, payload: Record<string, unknown>, requester: TRequester): Promise<IGroup> => {
   const group = await GPerm.loadGroup(groupIdOrSlug);
   const membership = await GPerm.getMembership(group._id, requester.id);
   if (!GPerm.canViewGroup(group, membership, requester)) {
@@ -417,17 +378,12 @@ const updateGroupIntoDB = async (
   if (
     payload.visibility !== undefined &&
     payload.visibility !== group.visibility &&
-    Object.values(GROUP_VISIBILITY).includes(
-      payload.visibility as (typeof GROUP_VISIBILITY)[keyof typeof GROUP_VISIBILITY],
-    )
+    Object.values(GROUP_VISIBILITY).includes(payload.visibility as (typeof GROUP_VISIBILITY)[keyof typeof GROUP_VISIBILITY])
   ) {
     GPerm.assert(group, membership, requester, "group:manageVisibility");
     update.visibility = payload.visibility;
     changed.push("visibility");
-    await Post.updateMany(
-      { group: group._id, isDeleted: false },
-      { groupVisibility: payload.visibility },
-    );
+    await Post.updateMany({ group: group._id, isDeleted: false }, { groupVisibility: payload.visibility });
   }
 
   if (Object.keys(update).length === 0) {
@@ -462,11 +418,13 @@ const deleteGroupFromDB = async (groupIdOrSlug: string, requester: TRequester) =
   group.isDeleted = true;
   await group.save();
   await logGroupActivity(group._id, requester.id, GROUP_ACTIVITY_ACTION.GROUP_DELETED);
-  await NotificationService.createNotificationIntoDB({
+  // Notify group owner (filtered out if same user)
+  await createNotification({
     recipient: String(group.owner),
-    actor: requester.id,
-    type: "group.deleted",
-    title: `${group.name} was deleted`,
+    actorId: requester.id,
+    actorName: "Admin",
+    type: NOTIFICATION_TYPE.ACCOUNT_UPDATE,
+    body: `${group.name} was deleted`,
     link: "/groups",
     entityType: "group",
     entityId: String(group._id),
@@ -497,10 +455,7 @@ const resolveMembershipOutcome = async (
   // groups — that is the point of an invite. Otherwise the normal
   // open-join rules apply.
   const openJoin =
-    !inviteRequiresApproval &&
-    (viaInvite ||
-      (group.joinPolicy === GROUP_JOIN_POLICY.OPEN &&
-        group.visibility === GROUP_VISIBILITY.PUBLIC));
+    !inviteRequiresApproval && (viaInvite || (group.joinPolicy === GROUP_JOIN_POLICY.OPEN && group.visibility === GROUP_VISIBILITY.PUBLIC));
 
   if (openJoin) {
     if (existing) {
@@ -524,18 +479,15 @@ const resolveMembershipOutcome = async (
     await Group.updateOne({ _id: group._id }, { $inc: { memberCount: 1 } });
     await syncChatMembership(group, userId, "add");
     await logGroupActivity(group._id, userId, GROUP_ACTIVITY_ACTION.MEMBER_JOINED);
-    await NotificationService.createNotificationIntoDB({
-      recipient: String(group.owner),
-      actor: userId,
-      type: "group.member_joined",
-      title: "New member joined your group",
-      body: `A new member joined ${group.name}.`,
-      link: `/groups/${group.slug}/members`,
-      entityType: "group",
-      entityId: String(group._id),
-      groupId: String(group._id),
-      dedupe: true,
-    });
+
+    const joiner = await User.findById(userId).select("name").lean<{ name: string }>();
+    await NotificationCreators.groupMembershipApproved(
+      String(group.owner),
+      userId,
+      joiner?.name || "Someone",
+      String(group._id),
+      group.name,
+    );
     return { status: GROUP_MEMBERSHIP_STATUS.APPROVED };
   }
 
@@ -564,30 +516,17 @@ const resolveMembershipOutcome = async (
   await logGroupActivity(group._id, userId, GROUP_ACTIVITY_ACTION.MEMBER_REQUESTED);
 
   const staff = await staffIdsOf(group);
+  const requesterUser = await User.findById(userId).select("name").lean<{ name: string }>();
   await Promise.all(
-    staff.map((id) =>
-      NotificationService.createNotificationIntoDB({
-        recipient: id,
-        actor: userId,
-        type: "group.join_request",
-        title: "New join request",
-        body: `Someone requested to join ${group.name}.`,
-        link: `/groups/${group.slug}/members?tab=pending`,
-        entityType: "group",
-        entityId: String(group._id),
-        groupId: String(group._id),
-        dedupe: true,
-      }),
+    staff.map((staffId) =>
+      NotificationCreators.groupJoinRequest(staffId, userId, requesterUser?.name || "Someone", String(group._id), group.name),
     ),
   );
 
   return { status: GROUP_MEMBERSHIP_STATUS.PENDING };
 };
 
-const joinGroupIntoDB = async (
-  groupIdOrSlug: string,
-  requester: TRequester,
-): Promise<{ status: string }> => {
+const joinGroupIntoDB = async (groupIdOrSlug: string, requester: TRequester): Promise<{ status: string }> => {
   const group = await GPerm.loadGroup(groupIdOrSlug);
   const membership = await GPerm.getMembership(group._id, requester.id);
 
@@ -607,16 +546,10 @@ const leaveGroupIntoDB = async (groupIdOrSlug: string, requester: TRequester) =>
     throw new AppError(httpStatus.FORBIDDEN, "You are not a member of this group");
   }
   if (String(group.owner) === requester.id) {
-    throw new AppError(
-      httpStatus.BAD_REQUEST,
-      "Transfer ownership before leaving the group",
-    );
+    throw new AppError(httpStatus.BAD_REQUEST, "Transfer ownership before leaving the group");
   }
 
-  await GroupMembership.updateOne(
-    { group: group._id, user: requester.id },
-    { status: GROUP_MEMBERSHIP_STATUS.LEFT, joinedAt: null },
-  );
+  await GroupMembership.updateOne({ group: group._id, user: requester.id }, { status: GROUP_MEMBERSHIP_STATUS.LEFT, joinedAt: null });
   await Group.updateOne({ _id: group._id }, { $inc: { memberCount: -1 } });
   await syncChatMembership(group, requester.id, "remove");
   await logGroupActivity(group._id, requester.id, GROUP_ACTIVITY_ACTION.MEMBER_LEFT);
@@ -649,9 +582,7 @@ const reviewJoinRequestIntoDB = async (
 
   await Group.updateOne(
     { _id: group._id },
-    decision === GROUP_MEMBERSHIP_STATUS.APPROVED
-      ? { $inc: { memberCount: 1, pendingCount: -1 } }
-      : { $inc: { pendingCount: -1 } },
+    decision === GROUP_MEMBERSHIP_STATUS.APPROVED ? { $inc: { memberCount: 1, pendingCount: -1 } } : { $inc: { pendingCount: -1 } },
   );
 
   if (decision === GROUP_MEMBERSHIP_STATUS.APPROVED) {
@@ -661,49 +592,27 @@ const reviewJoinRequestIntoDB = async (
   await logGroupActivity(
     group._id,
     requester.id,
-    decision === GROUP_MEMBERSHIP_STATUS.APPROVED
-      ? GROUP_ACTIVITY_ACTION.MEMBER_APPROVED
-      : GROUP_ACTIVITY_ACTION.MEMBER_REJECTED,
+    decision === GROUP_MEMBERSHIP_STATUS.APPROVED ? GROUP_ACTIVITY_ACTION.MEMBER_APPROVED : GROUP_ACTIVITY_ACTION.MEMBER_REJECTED,
     { targetType: "user", targetId: targetUserId },
   );
 
-  await NotificationService.createNotificationIntoDB({
-    recipient: targetUserId,
-    actor: requester.id,
-    type: "group.join_request_result",
-    title:
-      decision === GROUP_MEMBERSHIP_STATUS.APPROVED
-        ? "Your join request was approved"
-        : "Your join request was declined",
-    body:
-      decision === GROUP_MEMBERSHIP_STATUS.APPROVED
-        ? `Welcome to ${group.name}!`
-        : `Your request to join ${group.name} was declined.`,
-    link: `/groups/${group.slug}`,
-    entityType: "group",
-    entityId: String(group._id),
-    groupId: String(group._id),
-  });
+  if (decision === GROUP_MEMBERSHIP_STATUS.APPROVED) {
+    await NotificationCreators.groupJoinRequestApproved(targetUserId, String(group._id), group.name);
+  } else {
+    await NotificationCreators.groupJoinRequestRejected(targetUserId, String(group._id), group.name);
+  }
 
   return { status: decision };
 };
 
-const listMembersFromDB = async (
-  groupIdOrSlug: string,
-  query: Record<string, unknown>,
-  requester: TRequester,
-) => {
+const listMembersFromDB = async (groupIdOrSlug: string, query: Record<string, unknown>, requester: TRequester) => {
   const group = await GPerm.loadGroup(groupIdOrSlug);
   const membership = await GPerm.getMembership(group._id, requester.id);
   if (!GPerm.canViewGroup(group, membership, requester)) {
     throw new AppError(httpStatus.NOT_FOUND, "Group not found");
   }
   // Private member rosters are member-only information.
-  if (
-    group.visibility === GROUP_VISIBILITY.PRIVATE &&
-    !GPerm.isActiveMember(membership) &&
-    requester.role !== "ADMIN"
-  ) {
+  if (group.visibility === GROUP_VISIBILITY.PRIVATE && !GPerm.isActiveMember(membership) && requester.role !== "ADMIN") {
     throw new AppError(httpStatus.FORBIDDEN, "Join the group to see its members");
   }
 
@@ -741,17 +650,8 @@ const listMembersFromDB = async (
 /* Roles                                                               */
 /* ------------------------------------------------------------------ */
 
-const changeMemberRoleIntoDB = async (
-  groupIdOrSlug: string,
-  targetUserId: string,
-  newRole: TGroupRole,
-  requester: TRequester,
-) => {
-  const { group, membership } = await GPerm.authorize(
-    groupIdOrSlug,
-    requester,
-    "group:manageRoles",
-  );
+const changeMemberRoleIntoDB = async (groupIdOrSlug: string, targetUserId: string, newRole: TGroupRole, requester: TRequester) => {
+  const { group, membership } = await GPerm.authorize(groupIdOrSlug, requester, "group:manageRoles");
 
   if (!Object.values(GROUP_ROLE).includes(newRole) || newRole === GROUP_ROLE.OWNER) {
     throw new AppError(httpStatus.BAD_REQUEST, "Invalid role");
@@ -781,26 +681,20 @@ const changeMemberRoleIntoDB = async (
     metadata: { from: previousRole, to: newRole },
   });
 
-  await NotificationService.createNotificationIntoDB({
-    recipient: targetUserId,
-    actor: requester.id,
-    type: "group.role_changed",
-    title: `Your role changed in ${group.name}`,
-    body: `You are now ${newRole === GROUP_ROLE.MODERATOR ? "a moderator" : newRole === GROUP_ROLE.ADMIN ? "an admin" : "a member"}.`,
-    link: `/groups/${group.slug}`,
-    entityType: "group",
-    entityId: String(group._id),
-    groupId: String(group._id),
-  });
+  const requesterUser = await User.findById(requester.id).select("name").lean<{ name: string }>();
+  await NotificationCreators.groupMemberRoleChanged(
+    targetUserId,
+    requester.id,
+    requesterUser?.name || "Someone",
+    String(group._id),
+    group.name,
+    newRole,
+  );
 
   return { role: newRole, previousRole };
 };
 
-const transferOwnershipIntoDB = async (
-  groupIdOrSlug: string,
-  targetUserId: string,
-  requester: TRequester,
-) => {
+const transferOwnershipIntoDB = async (groupIdOrSlug: string, targetUserId: string, requester: TRequester) => {
   const { group } = await GPerm.authorize(groupIdOrSlug, requester, "group:transferOwnership");
 
   if (targetUserId === requester.id) {
@@ -838,31 +732,20 @@ const transferOwnershipIntoDB = async (
     metadata: { previousOwner: requester.id, newOwner: targetUserId },
   });
 
-  await NotificationService.createNotificationIntoDB({
-    recipient: targetUserId,
-    actor: requester.id,
-    type: "group.ownership_transferred",
-    title: `You are now the owner of ${group.name}`,
-    link: `/groups/${group.slug}/settings`,
-    entityType: "group",
-    entityId: String(group._id),
-    groupId: String(group._id),
-  });
+  const requesterUser = await User.findById(requester.id).select("name").lean<{ name: string }>();
+  await NotificationCreators.groupMembershipApproved(
+    targetUserId,
+    requester.id,
+    requesterUser?.name || "Someone",
+    String(group._id),
+    group.name,
+  );
 
   return { owner: targetUserId };
 };
 
-const removeMemberIntoDB = async (
-  groupIdOrSlug: string,
-  targetUserId: string,
-  requester: TRequester,
-  opts: { ban?: boolean } = {},
-) => {
-  const { group, membership } = await GPerm.authorize(
-    groupIdOrSlug,
-    requester,
-    "group:manageMembers",
-  );
+const removeMemberIntoDB = async (groupIdOrSlug: string, targetUserId: string, requester: TRequester, opts: { ban?: boolean } = {}) => {
+  const { group, membership } = await GPerm.authorize(groupIdOrSlug, requester, "group:manageMembers");
 
   if (targetUserId === requester.id) {
     throw new AppError(httpStatus.BAD_REQUEST, "Use the leave-group action for yourself");
@@ -882,11 +765,7 @@ const removeMemberIntoDB = async (
   // Admins may not remove other admins — only the owner can.
   const targetRole = target.role as TGroupRole;
   const actorRole = membership?.role ?? GROUP_ROLE.ADMIN;
-  if (
-    targetRole === GROUP_ROLE.ADMIN &&
-    actorRole !== GROUP_ROLE.OWNER &&
-    String(group.owner) !== requester.id
-  ) {
+  if (targetRole === GROUP_ROLE.ADMIN && actorRole !== GROUP_ROLE.OWNER && String(group.owner) !== requester.id) {
     throw new AppError(httpStatus.FORBIDDEN, "Only the owner can remove an admin");
   }
   if (targetRole === GROUP_ROLE.OWNER) {
@@ -896,9 +775,7 @@ const removeMemberIntoDB = async (
   const wasApproved = target.status === GROUP_MEMBERSHIP_STATUS.APPROVED;
   const wasPending = target.status === GROUP_MEMBERSHIP_STATUS.PENDING;
 
-  target.status = opts.ban
-    ? GROUP_MEMBERSHIP_STATUS.BANNED
-    : GROUP_MEMBERSHIP_STATUS.REMOVED;
+  target.status = opts.ban ? GROUP_MEMBERSHIP_STATUS.BANNED : GROUP_MEMBERSHIP_STATUS.REMOVED;
   target.bannedBy = opts.ban ? new Types.ObjectId(requester.id) : null;
   target.bannedAt = opts.ban ? new Date() : null;
   if (wasApproved) target.joinedAt = null;
@@ -912,39 +789,31 @@ const removeMemberIntoDB = async (
   if (wasApproved) await syncChatMembership(group, targetUserId, "remove");
 
   if (opts.ban) {
-    await Group.updateOne(
-      { _id: group._id },
-      { $addToSet: { bannedUsers: new Types.ObjectId(targetUserId) } },
-    );
+    await Group.updateOne({ _id: group._id }, { $addToSet: { bannedUsers: new Types.ObjectId(targetUserId) } });
   }
 
-  await logGroupActivity(
-    group._id,
-    requester.id,
-    opts.ban ? GROUP_ACTIVITY_ACTION.MEMBER_BANNED : GROUP_ACTIVITY_ACTION.MEMBER_REMOVED,
-    { targetType: "user", targetId: targetUserId },
-  );
+  await logGroupActivity(group._id, requester.id, opts.ban ? GROUP_ACTIVITY_ACTION.MEMBER_BANNED : GROUP_ACTIVITY_ACTION.MEMBER_REMOVED, {
+    targetType: "user",
+    targetId: targetUserId,
+  });
 
-  await NotificationService.createNotificationIntoDB({
+  // Notify the user about their removal/ban
+  const requesterUser = await User.findById(requester.id).select("name").lean<{ name: string }>();
+  await createNotification({
     recipient: targetUserId,
-    actor: requester.id,
-    type: opts.ban ? "group.banned" : "group.removed",
-    title: opts.ban
-      ? `You were banned from ${group.name}`
-      : `Your membership in ${group.name} ended`,
-    body: opts.ban ? undefined : "You are no longer a member of this group.",
-    link: `/groups/${group.slug}`,
+    actorId: requester.id,
+    actorName: requesterUser?.name || "Someone",
+    type: opts.ban ? NOTIFICATION_TYPE.SECURITY_ALERT : NOTIFICATION_TYPE.ACCOUNT_UPDATE,
     entityType: "group",
     entityId: String(group._id),
     groupId: String(group._id),
+    body: opts.ban ? `You were banned from ${group.name}` : `Your membership in ${group.name} ended`,
+    extra: group.name,
+    link: `/groups/${group.slug}`,
   });
 };
 
-const unbanMemberIntoDB = async (
-  groupIdOrSlug: string,
-  targetUserId: string,
-  requester: TRequester,
-) => {
+const unbanMemberIntoDB = async (groupIdOrSlug: string, targetUserId: string, requester: TRequester) => {
   const { group } = await GPerm.authorize(groupIdOrSlug, requester, "group:manageMembers");
   const target = await GroupMembership.findOne({ group: group._id, user: targetUserId });
   if (!target || target.status !== GROUP_MEMBERSHIP_STATUS.BANNED) {
@@ -954,10 +823,7 @@ const unbanMemberIntoDB = async (
   target.bannedBy = null;
   target.bannedAt = null;
   await target.save({ validateBeforeSave: false });
-  await Group.updateOne(
-    { _id: group._id },
-    { $pull: { bannedUsers: new Types.ObjectId(targetUserId) } },
-  );
+  await Group.updateOne({ _id: group._id }, { $pull: { bannedUsers: new Types.ObjectId(targetUserId) } });
   await logGroupActivity(group._id, requester.id, GROUP_ACTIVITY_ACTION.MEMBER_UNBANNED, {
     targetType: "user",
     targetId: targetUserId,
@@ -968,11 +834,7 @@ const unbanMemberIntoDB = async (
 /* Invites                                                             */
 /* ------------------------------------------------------------------ */
 
-const createInviteIntoDB = async (
-  groupIdOrSlug: string,
-  payload: Record<string, unknown>,
-  requester: TRequester,
-) => {
+const createInviteIntoDB = async (groupIdOrSlug: string, payload: Record<string, unknown>, requester: TRequester) => {
   const { group } = await GPerm.authorize(groupIdOrSlug, requester, "group:manageInvites");
 
   let expiresAt: Date | null = null;
@@ -1000,9 +862,7 @@ const createInviteIntoDB = async (
     createdBy: new Types.ObjectId(requester.id),
     label: payload.label ? String(payload.label) : null,
     maxUses,
-    requiresApproval:
-      payload.requiresApproval === true ||
-      group.joinPolicy === GROUP_JOIN_POLICY.REQUEST,
+    requiresApproval: payload.requiresApproval === true || group.joinPolicy === GROUP_JOIN_POLICY.REQUEST,
     expiresAt,
   });
 
@@ -1020,11 +880,7 @@ const listInvitesFromDB = async (groupIdOrSlug: string, requester: TRequester) =
   return GroupInvite.find({ group: group._id }).sort({ createdAt: -1 });
 };
 
-const revokeInviteIntoDB = async (
-  groupIdOrSlug: string,
-  inviteId: string,
-  requester: TRequester,
-) => {
+const revokeInviteIntoDB = async (groupIdOrSlug: string, inviteId: string, requester: TRequester) => {
   const { group } = await GPerm.authorize(groupIdOrSlug, requester, "group:manageInvites");
   const invite = await GroupInvite.findOne({ _id: inviteId, group: group._id });
   if (!invite) throw new AppError(httpStatus.NOT_FOUND, "Invite not found");
@@ -1076,8 +932,7 @@ const previewInvite = async (token: string) => {
 
   return {
     state,
-    requiresApproval:
-      invite.requiresApproval || group.joinPolicy === GROUP_JOIN_POLICY.REQUEST,
+    requiresApproval: invite.requiresApproval || group.joinPolicy === GROUP_JOIN_POLICY.REQUEST,
     group: {
       name: group.name,
       slug: group.slug,
@@ -1091,10 +946,7 @@ const previewInvite = async (token: string) => {
   };
 };
 
-const redeemInviteIntoDB = async (
-  token: string,
-  requester: TRequester,
-): Promise<{ status: string; slug: string }> => {
+const redeemInviteIntoDB = async (token: string, requester: TRequester): Promise<{ status: string; slug: string }> => {
   if (typeof token !== "string" || token.length < 20 || token.length > 100) {
     throw new AppError(httpStatus.NOT_FOUND, "Invitation not found");
   }
@@ -1156,17 +1008,27 @@ const redeemInviteIntoDB = async (
       return { status: GROUP_MEMBERSHIP_STATUS.APPROVED, slug: group.slug };
     }
 
-    const outcome = await resolveMembershipOutcome(
-      group,
-      requester.id,
-      invite.requiresApproval,
-      true,
-    );
+    const outcome = await resolveMembershipOutcome(group, requester.id, invite.requiresApproval, true);
 
     await logGroupActivity(group._id, requester.id, GROUP_ACTIVITY_ACTION.INVITE_REDEEMED, {
       targetType: "invite",
       targetId: String(invite._id),
     });
+
+    // Notify group staff about new member joining via invite
+    const staff = await staffIdsOf(group);
+    const requesterUser = await User.findById(requester.id).select("name").lean<{ name: string }>();
+    await Promise.all(
+      staff.map((staffId) =>
+        NotificationCreators.groupMembershipApproved(
+          staffId,
+          requester.id,
+          requesterUser?.name || "Someone",
+          String(group._id),
+          group.name,
+        ),
+      ),
+    );
 
     return { status: outcome.status, slug: group.slug };
   } catch (err) {
@@ -1180,11 +1042,7 @@ const redeemInviteIntoDB = async (
 /* Audit                                                               */
 /* ------------------------------------------------------------------ */
 
-const getAuditLogFromDB = async (
-  groupIdOrSlug: string,
-  query: Record<string, unknown>,
-  requester: TRequester,
-) => {
+const getAuditLogFromDB = async (groupIdOrSlug: string, query: Record<string, unknown>, requester: TRequester) => {
   const { group } = await GPerm.authorize(groupIdOrSlug, requester, "group:viewAuditLog");
   const page = Math.max(1, parseInt(String(query.page ?? "1"), 10) || 1);
   const limit = Math.min(100, parseInt(String(query.limit ?? "20"), 10) || 20);

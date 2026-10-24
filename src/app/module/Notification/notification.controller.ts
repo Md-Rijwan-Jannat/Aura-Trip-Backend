@@ -50,10 +50,32 @@ const deleteNotification = catchAsync(async (req, res) => {
   });
 });
 
+const getPreferences = catchAsync(async (req, res) => {
+  const preferences = await NotificationService.getPreferencesFromDB(req.user.id);
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    data: preferences.categories,
+  });
+});
+
+const updatePreferences = catchAsync(async (req, res) => {
+  const { categories } = req.body as { categories: Record<string, boolean> };
+  const preferences = await NotificationService.updatePreferencesFromDB(req.user.id, categories);
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Notification preferences updated",
+    data: preferences.categories,
+  });
+});
+
 export const NotificationControllers = {
   getMyNotifications,
   getUnreadCount,
   markRead,
   markAllRead,
   deleteNotification,
+  getPreferences,
+  updatePreferences,
 };

@@ -1,13 +1,15 @@
 import httpStatus from "http-status";
 import { Types } from "mongoose";
 import { Notification } from "./notification.model";
+import { NotificationPreferences } from "./notificationPreferences.model";
 import AppError from "../../errors/AppError";
 import { emitToUser } from "../../utils/socketRegistry";
+import { TNotificationType, NOTIFICATION_TYPE_CATEGORY } from "./notification.types";
 
 export type TNotificationInput = {
   recipient: string;
   actor?: string | null;
-  type: string;
+  type: TNotificationType;
   title: string;
   body?: string | null;
   link?: string | null;
@@ -27,10 +29,30 @@ const isAppRelativeLink = (link: string | null | undefined): string | null => {
   return link;
 };
 
+/** Check if a notification type is enabled for a user (respects preferences). */
+const isNotificationEnabled = async (userId: string, type: TNotificationType): Promise<boolean> => {
+  const category = NOTIFICATION_TYPE_CATEGORY[type];
+
+  // Security notifications are always enabled
+  if (category === "SECURITY") return true;
+
+  const prefs = await NotificationPreferences.findOne({ user: userId });
+  if (!prefs) {
+    // Default to enabled if preferences don't exist yet
+    return true;
+  }
+
+  return prefs.categories.get(category) ?? true;
+};
+
 const createNotificationIntoDB = async (input: TNotificationInput): Promise<InstanceType<typeof Notification> | null> => {
   if (!Types.ObjectId.isValid(input.recipient)) return null;
   // Never notify users about their own actions.
   if (input.actor && input.actor === input.recipient) return null;
+
+  // Check notification preferences before creating
+  const enabled = await isNotificationEnabled(input.recipient, input.type);
+  if (!enabled) return null;
 
   const link = isAppRelativeLink(input.link);
 
@@ -56,6 +78,7 @@ const createNotificationIntoDB = async (input: TNotificationInput): Promise<Inst
     groupId: input.groupId ?? null,
   });
 
+  // Only emit real-time event if recipient is connected
   emitToUser(String(input.recipient), "notification received", {
     _id: notification._id,
     type: notification.type,
@@ -63,6 +86,7 @@ const createNotificationIntoDB = async (input: TNotificationInput): Promise<Inst
     body: notification.body,
     link: notification.link,
     createdAt: notification.createdAt,
+    readAt: null,
   });
 
   return notification;
@@ -114,6 +138,32 @@ const deleteNotificationFromDB = async (userId: string, notificationId: string):
   if (!deleted) throw new AppError(httpStatus.NOT_FOUND, "Notification not found");
 };
 
+// Preferences functions
+const getPreferencesFromDB = async (userId: string): Promise<InstanceType<typeof NotificationPreferences>> => {
+  let prefs = await NotificationPreferences.findOne({ user: userId });
+  if (!prefs) {
+    // Create default preferences for user
+    prefs = await NotificationPreferences.create({ user: userId });
+  }
+  return prefs;
+};
+
+const updatePreferencesFromDB = async (
+  userId: string,
+  categories: Record<string, boolean>,
+): Promise<InstanceType<typeof NotificationPreferences>> => {
+  const prefs = await NotificationPreferences.findOneAndUpdate(
+    { user: userId },
+    {
+      $set: {
+        categories: new Map(Object.entries(categories)),
+      },
+    },
+    { upsert: true, new: true },
+  );
+  return prefs;
+};
+
 export const NotificationService = {
   createNotificationIntoDB,
   getMyNotificationsFromDB,
@@ -121,4 +171,6 @@ export const NotificationService = {
   markReadIntoDB,
   markAllReadIntoDB,
   deleteNotificationFromDB,
+  getPreferencesFromDB,
+  updatePreferencesFromDB,
 };

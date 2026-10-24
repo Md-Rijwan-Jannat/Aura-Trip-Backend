@@ -10,5 +10,7 @@ router.get("/unread-count", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), NotificationC
 router.patch("/read-all", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), NotificationControllers.markAllRead);
 router.patch("/:id/read", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), NotificationControllers.markRead);
 router.delete("/:id", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), NotificationControllers.deleteNotification);
+router.get("/preferences", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), NotificationControllers.getPreferences);
+router.patch("/preferences", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), NotificationControllers.updatePreferences);
 
 export const NotificationRoutes = router;

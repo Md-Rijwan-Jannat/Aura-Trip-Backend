@@ -1,30 +1,24 @@
 import httpStatus from "http-status";
 import { Types } from "mongoose";
+import mongoose from "mongoose";
 import AppError from "../../errors/AppError";
 import { Post } from "../Post/post.model";
 import { PostService, notifyGroupOfNewPost } from "../Post/post.service";
-import {
-  GROUP_ACTIVITY_ACTION,
-  GROUP_MODERATION_STATUS,
-  GROUP_ROLE,
-} from "./group.constants";
+import { GROUP_ACTIVITY_ACTION, GROUP_MODERATION_STATUS, GROUP_ROLE } from "./group.constants";
 import { TRequester } from "./group.interface";
 import { GroupPermissionService as GPerm, isStaffRole } from "./group.permissions";
 import { logGroupActivity } from "./group.service";
 import { TPost } from "../Post/post.interface";
-import { NotificationService } from "../Notification/notification.service";
+import { NotificationCreators, createNotification } from "../Notification/notificationHelpers";
+import { TNotificationType } from "../Notification/notification.types";
 import { GroupMembership } from "./groupMembership.model";
 import { Group } from "./group.model";
 
 type TQuery = Record<string, unknown>;
 
-const escapeRegex = (value: string): string =>
-  value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-const isStaffOf = (
-  membership: { role: string } | null,
-  requester: TRequester,
-): boolean => {
+const isStaffOf = (membership: { role: string } | null, requester: TRequester): boolean => {
   if (requester.role === "ADMIN") return true;
   if (!membership) return false;
   return isStaffRole(membership.role as (typeof GROUP_ROLE)[keyof typeof GROUP_ROLE]);
@@ -34,11 +28,7 @@ const isStaffOf = (
  * Group feed. Approved posts are visible to anyone who may view the group;
  * pending/rejected posts are visible ONLY to their author and group staff.
  */
-const getGroupFeedFromDB = async (
-  groupIdOrSlug: string,
-  query: TQuery,
-  requester: TRequester,
-) => {
+const getGroupFeedFromDB = async (groupIdOrSlug: string, query: TQuery, requester: TRequester) => {
   const group = await GPerm.loadGroup(groupIdOrSlug);
   const membership = await GPerm.getMembership(group._id, requester.id);
   if (!GPerm.canViewGroup(group, membership, requester)) {
@@ -57,11 +47,7 @@ const getGroupFeedFromDB = async (
   };
   const staffClause: Record<string, unknown> = {
     moderationStatus: {
-      $in: [
-        GROUP_MODERATION_STATUS.PENDING,
-        GROUP_MODERATION_STATUS.REJECTED,
-        GROUP_MODERATION_STATUS.REMOVED,
-      ],
+      $in: [GROUP_MODERATION_STATUS.PENDING, GROUP_MODERATION_STATUS.REJECTED, GROUP_MODERATION_STATUS.REMOVED],
     },
   };
 
@@ -80,10 +66,7 @@ const getGroupFeedFromDB = async (
     const safe = escapeRegex(String(query.search));
     filter.$and = [
       {
-        $or: [
-          { title: { $regex: safe, $options: "i" } },
-          { description: { $regex: safe, $options: "i" } },
-        ],
+        $or: [{ title: { $regex: safe, $options: "i" } }, { description: { $regex: safe, $options: "i" } }],
       },
     ];
   }
@@ -118,11 +101,7 @@ const getGroupFeedFromDB = async (
 };
 
 /** Create a post inside a group (delegates to the shared Post pipeline). */
-const createGroupPostIntoDB = async (
-  groupIdOrSlug: string,
-  payload: Record<string, unknown>,
-  requester: TRequester,
-) => {
+const createGroupPostIntoDB = async (groupIdOrSlug: string, payload: Record<string, unknown>, requester: TRequester) => {
   // Fail fast with the same 404 as an unknown group before delegating.
   const group = await GPerm.loadGroup(groupIdOrSlug);
 
@@ -136,9 +115,7 @@ const createGroupPostIntoDB = async (
       category: (payload.category as TPost["category"]) ?? "Other",
       status: "FREE",
       location: payload.location ? String(payload.location) : null,
-      tags: Array.isArray(payload.tags)
-        ? (payload.tags as unknown[]).slice(0, 20).map((t) => String(t))
-        : [],
+      tags: Array.isArray(payload.tags) ? (payload.tags as unknown[]).slice(0, 20).map((t) => String(t)) : [],
       // Delegation must know which group the post belongs to — this is what
       // triggers the membership/approval pipeline in createPostIntoDB.
       group: String(group._id),
@@ -151,16 +128,8 @@ const createGroupPostIntoDB = async (
 };
 
 /** Moderation queue: PENDING / APPROVED / REJECTED / REMOVED / REPORTED. */
-const getModerationQueueFromDB = async (
-  groupIdOrSlug: string,
-  query: TQuery,
-  requester: TRequester,
-) => {
-  const { group, membership } = await GPerm.authorize(
-    groupIdOrSlug,
-    requester,
-    "group:moderatePost",
-  );
+const getModerationQueueFromDB = async (groupIdOrSlug: string, query: TQuery, requester: TRequester) => {
+  const { group, membership } = await GPerm.authorize(groupIdOrSlug, requester, "group:moderatePost");
   void membership;
 
   const status = String(query.status ?? GROUP_MODERATION_STATUS.PENDING);
@@ -172,9 +141,7 @@ const getModerationQueueFromDB = async (
   if (status === "REPORTED") {
     filter.reportCount = { $gt: 0 };
   } else if (
-    Object.values(GROUP_MODERATION_STATUS).includes(
-      status as (typeof GROUP_MODERATION_STATUS)[keyof typeof GROUP_MODERATION_STATUS],
-    )
+    Object.values(GROUP_MODERATION_STATUS).includes(status as (typeof GROUP_MODERATION_STATUS)[keyof typeof GROUP_MODERATION_STATUS])
   ) {
     filter.moderationStatus = status;
   } else {
@@ -264,51 +231,61 @@ const moderatePostIntoDB = async (
     metadata: { from: previous, to: post.moderationStatus, reason: reason ?? null },
   });
 
-  const notifyAuthor = async (title: string, body?: string) => {
-    await NotificationService.createNotificationIntoDB({
-      recipient: String(post.user),
-      actor: requester.id,
-      type: `group.post_${action}`,
-      title,
-      body,
-      link: `/groups/${group.slug}?post=${String(post._id)}`,
-      entityType: "post",
-      entityId: String(post._id),
-      groupId: String(group._id),
-      dedupe: true,
-    });
+  const notifyAuthor = async () => {
+    const User = mongoose.model("User");
+    const requesterUser = await User.findById(requester.id).select("name").lean<{ name?: string }>();
+
+    if (action === "approve" || action === "restore") {
+      await NotificationCreators.groupPostApproved(
+        String(post.user),
+        requester.id,
+        requesterUser?.name || "Someone",
+        String(post._id),
+        String(group._id),
+        group.name,
+      );
+    } else if (action === "reject") {
+      await NotificationCreators.groupPostRejected(
+        String(post.user),
+        requester.id,
+        requesterUser?.name || "Someone",
+        String(post._id),
+        String(group._id),
+        group.name,
+        reason,
+      );
+    } else if (action === "remove") {
+      await createNotification({
+        recipient: String(post.user),
+        actorId: requester.id,
+        actorName: requesterUser?.name || "Someone",
+        type: "ACCOUNT_UPDATE" as TNotificationType,
+        body: post.moderationReason || "Your post was removed by group staff",
+        extra: group.name,
+        link: `/groups/${group.slug}`,
+        entityType: "post",
+        entityId: String(post._id),
+        groupId: String(group._id),
+      });
+    }
   };
 
   if (action === "approve" || action === "restore") {
-    await notifyAuthor(
-      action === "approve" ? "Your post was approved" : "Your post was restored",
-      `Your post is now visible in ${group.name}.`,
-    );
+    await notifyAuthor();
     if (previous !== GROUP_MODERATION_STATUS.APPROVED) {
       await notifyGroupOfNewPost(group._id, String(post.user), post);
     }
   } else if (action === "reject") {
-    await notifyAuthor(
-      "Your post was not approved",
-      `${post.moderationReason} — Only you can see this status.`,
-    );
+    await notifyAuthor();
   } else if (action === "remove") {
-    await notifyAuthor(
-      "Your post was removed by group staff",
-      post.moderationReason ?? undefined,
-    );
+    await notifyAuthor();
   }
 
   return post;
 };
 
 /** Mute/unmute a member (restricted members cannot post or comment). */
-const setMemberMutedIntoDB = async (
-  groupIdOrSlug: string,
-  targetUserId: string,
-  muted: boolean,
-  requester: TRequester,
-) => {
+const setMemberMutedIntoDB = async (groupIdOrSlug: string, targetUserId: string, muted: boolean, requester: TRequester) => {
   const { group } = await GPerm.authorize(groupIdOrSlug, requester, "group:manageMembers");
   if (targetUserId === String(group.owner)) {
     throw new AppError(httpStatus.FORBIDDEN, "The owner cannot be muted");
@@ -322,15 +299,9 @@ const setMemberMutedIntoDB = async (
   }
 
   if (muted) {
-    await Group.updateOne(
-      { _id: group._id },
-      { $addToSet: { mutedUsers: new Types.ObjectId(targetUserId) } },
-    );
+    await Group.updateOne({ _id: group._id }, { $addToSet: { mutedUsers: new Types.ObjectId(targetUserId) } });
   } else {
-    await Group.updateOne(
-      { _id: group._id },
-      { $pull: { mutedUsers: new Types.ObjectId(targetUserId) } },
-    );
+    await Group.updateOne({ _id: group._id }, { $pull: { mutedUsers: new Types.ObjectId(targetUserId) } });
   }
 
   await logGroupActivity(group._id, requester.id, GROUP_ACTIVITY_ACTION.SETTINGS_UPDATED, {
@@ -339,13 +310,17 @@ const setMemberMutedIntoDB = async (
     metadata: { muted },
   });
 
-  await NotificationService.createNotificationIntoDB({
+  // Notify the user about being muted/unmuted
+  const User = mongoose.model("User");
+  const requesterUser = await User.findById(requester.id).select("name").lean<{ name?: string }>();
+
+  await createNotification({
     recipient: targetUserId,
-    actor: requester.id,
-    type: muted ? "group.muted" : "group.unmuted",
-    title: muted
-      ? `You were muted in ${group.name}`
-      : `You can post again in ${group.name}`,
+    actorId: requester.id,
+    actorName: requesterUser?.name || "Someone",
+    type: "ACCOUNT_UPDATE" as TNotificationType,
+    body: muted ? `You were muted in ${group.name}` : `You can post again in ${group.name}`,
+    extra: group.name,
     link: `/groups/${group.slug}`,
     entityType: "group",
     entityId: String(group._id),
@@ -353,11 +328,7 @@ const setMemberMutedIntoDB = async (
   });
 };
 
-const getShortsFromDB = async (
-  groupIdOrSlug: string,
-  query: TQuery,
-  requester: TRequester,
-) => {
+const getShortsFromDB = async (groupIdOrSlug: string, query: TQuery, requester: TRequester) => {
   const group = await GPerm.loadGroup(groupIdOrSlug);
   const membership = await GPerm.getMembership(group._id, requester.id);
   if (!GPerm.canViewGroup(group, membership, requester)) {
@@ -365,11 +336,7 @@ const getShortsFromDB = async (
   }
   // Group shorts are member-only, even in PUBLIC groups (visibility of the
   // group page itself is broader than the short-video content).
-  if (
-    requester.role !== "ADMIN" &&
-    !GPerm.isActiveMember(membership) &&
-    !GPerm.isStaff(membership, requester)
-  ) {
+  if (requester.role !== "ADMIN" && !GPerm.isActiveMember(membership) && !GPerm.isStaff(membership, requester)) {
     throw new AppError(httpStatus.FORBIDDEN, "Join this group to see its shorts");
   }
 
@@ -384,10 +351,7 @@ const getShortsFromDB = async (
   };
   // Staff also see their own pending shorts in the group context.
   if (!isStaffOf(membership, requester)) {
-    filter.$or = [
-      { status: "PUBLISHED" },
-      { user: requester.id, status: { $in: ["PENDING", "PROCESSING"] } },
-    ];
+    filter.$or = [{ status: "PUBLISHED" }, { user: requester.id, status: { $in: ["PENDING", "PROCESSING"] } }];
     delete filter.status;
   }
 
@@ -414,4 +378,3 @@ export const GroupFeedService = {
   setMemberMutedIntoDB,
   getShortsFromDB,
 };
-

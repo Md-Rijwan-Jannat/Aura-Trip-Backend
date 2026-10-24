@@ -8,7 +8,7 @@ import { Short } from "../Short/short.model";
 import { ShortService } from "../Short/short.service";
 import { assertCanInteractWithPost } from "../Post/postAccess";
 import mongoose from "mongoose";
-import { NotificationService } from "../Notification/notification.service";
+import { NotificationCreators, createNotification } from "../Notification/notificationHelpers";
 
 type TRequester = { id: string; role: string };
 
@@ -145,35 +145,30 @@ const likeFromDB = async (userId: string, targetId: string, type: "post" | "comm
       $push: { likes: userId },
     });
     // Notify the post author (deduped: only once per unread cycle).
-    const post = await Post.findById(targetId).select("user title").lean();
+    const post = await Post.findById(targetId).select("user title").lean<{ user?: string; title?: string }>();
     if (post) {
-      await NotificationService.createNotificationIntoDB({
-        recipient: String(post.user),
-        actor: userId,
-        type: "post.liked",
-        title: "Someone liked your post",
-        body: post.title ?? undefined,
-        link: `/posts/${targetId}`,
-        entityType: "post",
-        entityId: targetId,
-        dedupe: true,
-      });
+      const User = mongoose.model("User");
+      const reactor = await User.findById(userId).select("name").lean<{ name?: string }>();
+      await NotificationCreators.postLike(String(post.user), userId, reactor?.name || "Someone", targetId);
     }
   } else if (type === "comment") {
     await Comment.findByIdAndUpdate(targetId, {
       $push: { likes: userId },
     });
     // Notify the comment author.
-    const comment = await Comment.findById(targetId).select("user post").lean();
+    const comment = await Comment.findById(targetId).select("user post").lean<{ user?: string; post?: string }>();
     if (comment) {
-      await NotificationService.createNotificationIntoDB({
+      const User = mongoose.model("User");
+      const reactor = await User.findById(userId).select("name").lean<{ name?: string }>();
+      const post = comment.post ? await Post.findById(String(comment.post)).select("title").lean<{ title?: string }>() : null;
+      await createNotification({
         recipient: String(comment.user),
-        actor: userId,
-        type: "comment.liked",
-        title: "Someone liked your comment",
-        link: comment.post ? `/posts/${String(comment.post)}` : null,
+        actorId: userId,
+        actorName: reactor?.name || "Someone",
+        type: "POST_COMMENT_REACTION",
         entityType: "comment",
         entityId: targetId,
+        link: post ? `/posts/${String(comment.post)}` : undefined,
         dedupe: true,
       });
     }
@@ -332,45 +327,44 @@ const setReactionFromDB = async (
   void (async () => {
     try {
       if (targetType === "post") {
-        const post = await Post.findById(targetId).select("user title").lean();
+        const post = await Post.findById(targetId).select("user title").lean<{ user?: string; title?: string }>();
         if (post) {
-          await NotificationService.createNotificationIntoDB({
-            recipient: String(post.user),
-            actor: userId,
-            type: "post.reacted",
-            title: "Someone reacted to your post",
-            body: post.title ?? undefined,
-            link: `/posts/${targetId}`,
-            entityType: "post",
-            entityId: targetId,
-            dedupe: true,
-          });
+          const User = mongoose.model("User");
+          const reactor = await User.findById(userId).select("name").lean<{ name?: string }>();
+          await NotificationCreators.postReaction(String(post.user), userId, reactor?.name || "Someone", targetId, reaction);
         }
       } else if (targetType === "comment") {
-        const comment = await Comment.findById(targetId).select("user post").lean();
+        const comment = await Comment.findById(targetId).select("user post").lean<{ user?: string; post?: string }>();
         if (comment) {
-          await NotificationService.createNotificationIntoDB({
+          const User = mongoose.model("User");
+          const reactor = await User.findById(userId).select("name").lean<{ name?: string }>();
+          const post = comment.post ? await Post.findById(String(comment.post)).select("title").lean<{ title?: string }>() : null;
+          await createNotification({
             recipient: String(comment.user),
-            actor: userId,
-            type: "comment.reacted",
-            title: "Someone reacted to your comment",
-            link: comment.post ? `/posts/${String(comment.post)}` : null,
+            actorId: userId,
+            actorName: reactor?.name || "Someone",
+            type: "POST_COMMENT_REACTION",
             entityType: "comment",
             entityId: targetId,
+            extra: reaction,
+            link: post ? `/posts/${String(comment.post)}` : undefined,
             dedupe: true,
           });
         }
       } else if (targetType === "short") {
-        const short = await Short.findById(targetId).select("user").lean();
+        const short = await Short.findById(targetId).select("user").lean<{ user?: string }>();
         if (short) {
-          await NotificationService.createNotificationIntoDB({
+          const User = mongoose.model("User");
+          const reactor = await User.findById(userId).select("name").lean<{ name?: string }>();
+          await createNotification({
             recipient: String(short.user),
-            actor: userId,
-            type: "short.reacted",
-            title: "Someone reacted to your Short",
-            link: `/shorts/${targetId}`,
+            actorId: userId,
+            actorName: reactor?.name || "Someone",
+            type: "SHORT_REACTION",
             entityType: "short",
             entityId: targetId,
+            extra: reaction,
+            link: `/shorts/${targetId}`,
             dedupe: true,
           });
         }
