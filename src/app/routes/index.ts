@@ -14,6 +14,7 @@ import { ReviewRoutes } from "../module/Review/review.routes";
 import { GroupRoutes } from "../module/Group/group.routes";
 import { NotificationRoutes } from "../module/Notification/notification.routes";
 import { ShortRoutes } from "../module/Short/short.routes";
+import { MusicRoutes } from "../module/Music/music.routes";
 
 const router = express.Router();
 
@@ -77,6 +78,10 @@ const moduleRoutes = [
   {
     path: "/shorts",
     route: ShortRoutes,
+  },
+  {
+    path: "/music",
+    route: MusicRoutes,
   },
 ];
 

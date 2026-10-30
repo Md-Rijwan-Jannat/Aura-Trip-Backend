@@ -8,37 +8,17 @@ import { PostValidation } from "./post.validation";
 const router = express.Router();
 
 // More specific route for premium posts
-router.get(
-  "/premium",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  PostControllers.getAllPremiumPosts,
-);
+router.get("/premium", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), PostControllers.getAllPremiumPosts);
 
 // get All normal posts
-router.get(
-  "/",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  PostControllers.getAllPosts,
-);
+router.get("/", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), PostControllers.getAllPosts);
 // get All normal posts
-router.get(
-  "/normal-posts-analytics",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  PostControllers.getAllPostsNormalForAnalytics,
-);
+router.get("/normal-posts-analytics", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), PostControllers.getAllPostsNormalForAnalytics);
 // get All premium posts
-router.get(
-  "/premium-posts-analytics",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  PostControllers.getAllPostsPremiumForAnalytics,
-);
+router.get("/premium-posts-analytics", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), PostControllers.getAllPostsPremiumForAnalytics);
 
 // Dynamic route for post by ID
-router.get(
-  "/:id",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  PostControllers.getPostById,
-);
+router.get("/:id", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), PostControllers.getPostById);
 
 // General routes
 router.post(
@@ -57,18 +37,10 @@ router.patch(
 );
 
 // delete post
-router.delete(
-  "/:id",
-  Auth(USER_ROLE.ADMIN, USER_ROLE.USER),
-  PostControllers.deletePost,
-);
+router.delete("/:id", Auth(USER_ROLE.ADMIN, USER_ROLE.USER), PostControllers.deletePost);
 
 // report a post
-router.put(
-  "/report/:id/",
-  Auth(USER_ROLE.ADMIN, USER_ROLE.USER),
-  PostControllers.reportPost,
-);
+router.put("/report/:id/", Auth(USER_ROLE.ADMIN, USER_ROLE.USER), PostControllers.reportPost);
 
 // Profile pin / highlight (owner or admin; enforced in the service)
 router.post(
@@ -94,16 +66,8 @@ router.post(
 );
 
 // Per-user hide from my feed (idempotent)
-router.post(
-  "/:id/hide",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  PostControllers.hidePost,
-);
-router.delete(
-  "/:id/hide",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  PostControllers.unhidePost,
-);
+router.post("/:id/hide", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), PostControllers.hidePost);
+router.delete("/:id/hide", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), PostControllers.unhidePost);
 
 // Post owner's comment ordering + featured-comment policy
 router.patch(
@@ -112,5 +76,8 @@ router.patch(
   validateRequest(PostValidation.commentSettingsValidationSchema),
   PostControllers.updateCommentSettings,
 );
+
+// Share a post to the requester's feed
+router.post("/:id/share", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), PostControllers.sharePostToFeed);
 
 export const PostRoutes = router;

@@ -1,10 +1,6 @@
 import { model, Schema } from "mongoose";
 import { IShort } from "../Group/group.interface";
-import {
-  GROUP_MODERATION_STATUS,
-  SHORT_AUDIENCE,
-  SHORT_STATUS,
-} from "../Group/group.constants";
+import { GROUP_MODERATION_STATUS, SHORT_AUDIENCE, SHORT_STATUS } from "../Group/group.constants";
 
 const shortSchema = new Schema<IShort>(
   {
@@ -88,6 +84,17 @@ const shortSchema = new Schema<IShort>(
       type: Number,
       default: 0,
       min: 0,
+    },
+    // Featured/highlighted comment (auto-selected or manually set by short owner)
+    featuredCommentId: {
+      type: Schema.Types.ObjectId,
+      ref: "Comment",
+      default: null,
+    },
+    featuredCommentMode: {
+      type: String,
+      enum: ["AUTOMATIC", "MANUAL"],
+      default: "AUTOMATIC",
     },
     viewCount: {
       type: Number,

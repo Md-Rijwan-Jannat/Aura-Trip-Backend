@@ -9,6 +9,7 @@ import { ShortService } from "../Short/short.service";
 import { assertCanInteractWithPost } from "../Post/postAccess";
 import mongoose from "mongoose";
 import { NotificationCreators, createNotification } from "../Notification/notificationHelpers";
+import { getSocketServer } from "../../utils/socketRegistry";
 
 type TRequester = { id: string; role: string };
 
@@ -332,6 +333,18 @@ const setReactionFromDB = async (
           const User = mongoose.model("User");
           const reactor = await User.findById(userId).select("name").lean<{ name?: string }>();
           await NotificationCreators.postReaction(String(post.user), userId, reactor?.name || "Someone", targetId, reaction);
+
+          // Real-time event: notify post owner of new reaction
+          const io = getSocketServer();
+          if (io && String(post.user) !== userId) {
+            io.to(String(post.user)).emit("reaction:new", {
+              targetType: "post",
+              targetId,
+              userId,
+              userName: reactor?.name || "Someone",
+              reactionType: reaction,
+            });
+          }
         }
       } else if (targetType === "comment") {
         const comment = await Comment.findById(targetId).select("user post").lean<{ user?: string; post?: string }>();
@@ -350,6 +363,19 @@ const setReactionFromDB = async (
             link: post ? `/posts/${String(comment.post)}` : undefined,
             dedupe: true,
           });
+
+          // Real-time event: notify comment owner
+          const io = getSocketServer();
+          if (io && String(comment.user) !== userId) {
+            io.to(String(comment.user)).emit("reaction:new", {
+              targetType: "comment",
+              targetId,
+              postId: String(comment.post),
+              userId,
+              userName: reactor?.name || "Someone",
+              reactionType: reaction,
+            });
+          }
         }
       } else if (targetType === "short") {
         const short = await Short.findById(targetId).select("user").lean<{ user?: string }>();
@@ -367,12 +393,31 @@ const setReactionFromDB = async (
             link: `/shorts/${targetId}`,
             dedupe: true,
           });
+
+          // Real-time event: notify short owner
+          const io = getSocketServer();
+          if (io && String(short.user) !== userId) {
+            io.to(String(short.user)).emit("reaction:new", {
+              targetType: "short",
+              targetId,
+              userId,
+              userName: reactor?.name || "Someone",
+              reactionType: reaction,
+            });
+          }
         }
       }
     } catch {
       // Notification failure must never block the reaction response.
     }
   })();
+
+  // Emit real-time update to all viewers of this content
+  const io = getSocketServer();
+  if (io) {
+    const summary = await getReactionSummary(userId, targetType, targetId, { skipAccessCheck: true });
+    io.emit(`reaction:update:${targetType}:${targetId}`, summary);
+  }
 
   return getReactionSummary(userId, targetType, targetId, { skipAccessCheck: true });
 };
@@ -393,6 +438,13 @@ const removeReactionFromDB = async (
 
   if (deleted && targetType !== "short") {
     await syncLegacyLikeArray(targetType, targetId, userId, false);
+  }
+
+  // Emit real-time update to all viewers
+  const io = getSocketServer();
+  if (io) {
+    const summary = await getReactionSummary(userId, targetType, targetId, { skipAccessCheck: true });
+    io.emit(`reaction:update:${targetType}:${targetId}`, summary);
   }
 
   return getReactionSummary(userId, targetType, targetId, {

@@ -10,14 +10,13 @@ export const MESSAGE_TYPE = {
   EMOJI: "EMOJI",
   VIEW_ONCE_IMAGE: "VIEW_ONCE_IMAGE",
   LIVE_LOCATION: "LIVE_LOCATION",
+  SHARED_POST: "SHARED_POST",
+  SHARED_SHORT: "SHARED_SHORT",
 } as const;
 
 export type TMessageType = (typeof MESSAGE_TYPE)[keyof typeof MESSAGE_TYPE];
 
-export const MESSAGE_TYPE_VALUES = Object.values(MESSAGE_TYPE) as [
-  TMessageType,
-  ...TMessageType[],
-];
+export const MESSAGE_TYPE_VALUES = Object.values(MESSAGE_TYPE) as [TMessageType, ...TMessageType[]];
 
 /** How long a LIVE_LOCATION share stays live (server-set at creation). */
 export const LIVE_LOCATION_DURATION_MS = 15 * 60_000;
@@ -39,6 +38,18 @@ export interface IMessageLocation {
 export interface IMessageLiveLocation {
   /** Server-calculated end of the sharing window (15 minutes from creation). */
   expiresAt: Date;
+}
+
+/** Shared content reference for SHARED_POST and SHARED_SHORT messages. */
+export interface IMessageSharedContent {
+  entityType: "post" | "short";
+  entityId: string;
+  /** Snapshot of title/caption at share time */
+  title?: string | null;
+  /** Snapshot of first image/video URL */
+  previewUrl?: string | null;
+  /** Snapshot of author name */
+  authorName?: string | null;
 }
 
 /** Read-safe projection of a message that another message replies to. */
@@ -85,6 +96,8 @@ export interface IMessage extends Document {
   replyTo?: Types.ObjectId | null;
   /** Denormalized emoji reactions — one entry per reacting user. */
   reactions: IMessageReaction[];
+  /** Shared content reference for SHARED_POST and SHARED_SHORT messages. */
+  sharedContent?: IMessageSharedContent | null;
   isEdited: boolean;
   editedAt: Date | null;
   isDeleted: boolean;
@@ -103,12 +116,7 @@ export interface IMessage extends Document {
  */
 export type TPublicMessage = Omit<
   IMessage,
-  | "mediaUrl"
-  | "mediaMeta"
-  | "viewOnceConsumedAt"
-  | "viewOnceConsumedBy"
-  | "replyTo"
-  | "reactions"
+  "mediaUrl" | "mediaMeta" | "viewOnceConsumedAt" | "viewOnceConsumedBy" | "replyTo" | "reactions"
 > & {
   mediaUrl: string | null;
   mediaMeta: IMessageMediaMeta | null;

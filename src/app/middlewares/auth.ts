@@ -17,10 +17,7 @@ const Auth = (...requiredRoles: (keyof typeof USER_ROLE)[]) => {
       throw new AppError(httpStatus.UNAUTHORIZED, "You are not authorized!");
     }
 
-    const decoded = verifyToken(
-      token,
-      config.jwt_access_secret as string
-    ) as JwtPayload;
+    const decoded = verifyToken(token, config.jwt_access_secret as string) as JwtPayload;
 
     const { role, email } = decoded;
 
@@ -38,7 +35,7 @@ const Auth = (...requiredRoles: (keyof typeof USER_ROLE)[]) => {
       throw new AppError(httpStatus.FORBIDDEN, "This user is blocked !");
     }
 
-    if (requiredRoles && !requiredRoles.includes(role)) {
+    if (requiredRoles.length > 0 && !requiredRoles.includes(role)) {
       throw new AppError(httpStatus.UNAUTHORIZED, "You are not authorized");
     }
 

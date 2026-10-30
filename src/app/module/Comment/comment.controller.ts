@@ -32,12 +32,11 @@ const getAllComment = catchAsync(async (req: Request, res: Response) => {
 
 // Get all comments for a post (sorted; resolves the featured comment)
 const getCommentForPost = catchAsync(async (req: Request, res: Response) => {
-  const { comments, sortMode, featuredCommentId, featuredMode } =
-    await CommentService.getCommentForPostFromDB(
-      req.params.postId,
-      req.query,
-      { id: req.user.id, role: req.user.role },
-    );
+  const { comments, sortMode, featuredCommentId, featuredMode } = await CommentService.getCommentForPostFromDB(
+    req.params.postId,
+    req.query,
+    { id: req.user.id, role: req.user.role },
+  );
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -49,11 +48,7 @@ const getCommentForPost = catchAsync(async (req: Request, res: Response) => {
 
 // Update a comment
 const updateComment = catchAsync(async (req: Request, res: Response) => {
-  const comment = await CommentService.updateCommentIntoDB(
-    req.params.id,
-    req.body,
-    { id: req.user.id, role: req.user.role },
-  );
+  const comment = await CommentService.updateCommentIntoDB(req.params.id, req.body, { id: req.user.id, role: req.user.role });
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -78,12 +73,7 @@ const deleteComment = catchAsync(async (req: Request, res: Response) => {
 
 // Reply to a comment
 const replyToComment = catchAsync(async (req: Request, res: Response) => {
-  const reply = await CommentService.replyToCommentFromDB(
-    req.params.id,
-    req.body,
-    req.user.id,
-    { id: req.user.id, role: req.user.role },
-  );
+  const reply = await CommentService.replyToCommentFromDB(req.params.id, req.body, req.user.id, { id: req.user.id, role: req.user.role });
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
     success: true,
@@ -94,18 +84,31 @@ const replyToComment = catchAsync(async (req: Request, res: Response) => {
 
 // Get all comments for a short (audience + group membership enforced)
 const getCommentsForShort = catchAsync(async (req: Request, res: Response) => {
-  const { comments, sortMode, featuredCommentId, featuredMode } =
-    await CommentService.getCommentsForShortFromDB(
-      req.params.shortId,
-      req.query,
-      { id: req.user.id, role: req.user.role },
-    );
+  const { comments, sortMode, featuredCommentId, featuredMode } = await CommentService.getCommentsForShortFromDB(
+    req.params.shortId,
+    req.query,
+    { id: req.user.id, role: req.user.role },
+  );
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Comments retrieved successfully",
     data: comments,
     meta: { sortMode, featuredCommentId, featuredMode },
+  });
+});
+
+// Set or remove highlighted comment (post/short owner only)
+const setHighlightedComment = catchAsync(async (req: Request, res: Response) => {
+  const result = await CommentService.setHighlightedCommentIntoDB(req.params.postId, req.body.commentId, {
+    id: req.user.id,
+    role: req.user.role,
+  });
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: result.commentId ? "Comment highlighted successfully" : "Highlight removed successfully",
+    data: result,
   });
 });
 
@@ -117,4 +120,5 @@ export const CommentControllers = {
   updateComment,
   deleteComment,
   replyToComment,
+  setHighlightedComment,
 };

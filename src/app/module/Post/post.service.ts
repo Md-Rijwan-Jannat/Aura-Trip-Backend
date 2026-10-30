@@ -613,6 +613,55 @@ const updateCommentSettingsFromDB = async (
   return updated;
 };
 
+/**
+ * Share a post to the requester's feed with an optional caption and audience.
+ * Creates a new post that references the original shared content.
+ */
+const sharePostToFeedFromDB = async (
+  postId: string,
+  payload: {
+    caption?: string;
+    audience?: "PUBLIC" | "FRIENDS" | "PRIVATE";
+  },
+  requester: TRequester,
+): Promise<TPost> => {
+  const originalPost = await Post.findById(postId);
+  if (!originalPost || originalPost.isDeleted) {
+    throw new AppError(httpStatus.NOT_FOUND, "Post not found");
+  }
+
+  // Ensure the requester can view the post before sharing
+  await assertCanViewPost(originalPost, requester);
+
+  // Create a new post with shared content reference
+  const sharedPost = await Post.create({
+    user: requester.id,
+    title: payload.caption || `Shared: ${originalPost.title || ""}`,
+    description: payload.caption || "",
+    sharedPost: originalPost._id,
+    sharedPostAuthor: originalPost.user,
+    category: originalPost.category,
+    status: "FREE",
+    images: [], // Don't duplicate images
+    // Audience/privacy would be added here if the schema supports it
+  });
+
+  // Increment share count on original post
+  await Post.findByIdAndUpdate(postId, { $inc: { shareCount: 1 } });
+
+  // Notify original post author
+  void (async () => {
+    try {
+      const sharer = await User.findById(requester.id).select("name").lean();
+      await NotificationCreators.postShared(String(originalPost.user), requester.id, sharer?.name || "Someone", String(originalPost._id));
+    } catch {
+      /* never block sharing */
+    }
+  })();
+
+  return sharedPost;
+};
+
 export const PostService = {
   createPostIntoDB,
   getPostByIdFromDB,
@@ -631,4 +680,5 @@ export const PostService = {
   unhidePostForUserFromDB,
   updateCommentSettingsFromDB,
   getHiddenPostIds,
+  sharePostToFeedFromDB,
 };

@@ -1,10 +1,6 @@
 import { model, Schema } from "mongoose";
 import { REACTION_TYPES } from "../Reacts/react.interface";
-import {
-  IMessage,
-  MESSAGE_TYPE,
-  MESSAGE_TYPE_VALUES,
-} from "../Messages/message.interface";
+import { IMessage, MESSAGE_TYPE, MESSAGE_TYPE_VALUES } from "../Messages/message.interface";
 
 const messageSchema = new Schema<IMessage>(
   {
@@ -83,6 +79,18 @@ const messageSchema = new Schema<IMessage>(
         type: { type: String, enum: [...REACTION_TYPES], required: true },
       },
     ],
+    // Shared content reference for SHARED_POST and SHARED_SHORT messages.
+    sharedContent: {
+      _id: false,
+      type: {
+        entityType: { type: String, enum: ["post", "short"], required: true },
+        entityId: { type: String, required: true },
+        title: { type: String, maxlength: 500, default: null },
+        previewUrl: { type: String, maxlength: 2000, default: null },
+        authorName: { type: String, maxlength: 200, default: null },
+      },
+      default: null,
+    },
     isEdited: { type: Boolean, default: false },
     editedAt: { type: Date, default: null },
     isDeleted: { type: Boolean, default: false },

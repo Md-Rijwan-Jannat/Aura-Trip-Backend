@@ -1,13 +1,6 @@
 import mongoose, { Schema } from "mongoose";
 import { TPost } from "./post.interface";
-import {
-  CategoryEnum,
-  COMMENT_HIGHLIGHT_MODES,
-  COMMENT_SORT_MODES,
-  MEDIA_LAYOUT,
-  MEDIA_LAYOUT_LIST,
-  POST_STATUS,
-} from "./post.constants";
+import { CategoryEnum, COMMENT_HIGHLIGHT_MODES, COMMENT_SORT_MODES, MEDIA_LAYOUT, MEDIA_LAYOUT_LIST, POST_STATUS } from "./post.constants";
 
 // Report Schema
 const reportSchema = new Schema(
@@ -29,7 +22,7 @@ const reportSchema = new Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Post Schema
@@ -144,6 +137,17 @@ const postSchema = new Schema<TPost>(
       type: Date,
       default: null,
     },
+    // Featured/highlighted comment (auto-selected or manually set by post owner)
+    featuredCommentId: {
+      type: Schema.Types.ObjectId,
+      ref: "Comment",
+      default: null,
+    },
+    featuredCommentMode: {
+      type: String,
+      enum: ["AUTOMATIC", "MANUAL"],
+      default: "AUTOMATIC",
+    },
     // Profile pin — at most ONE pinned post per author (partial unique
     // index below). Only ever set by the owner (or a platform admin).
     pinned: {
@@ -191,7 +195,7 @@ const postSchema = new Schema<TPost>(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 // Hot-path indexes: feed/profile lookups by author and by

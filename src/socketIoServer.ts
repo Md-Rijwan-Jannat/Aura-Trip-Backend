@@ -8,14 +8,14 @@ import { Message } from "./app/module/Messages/message.model";
 import { CallServices } from "./app/module/Call/call.service";
 import { CALL_MEDIA_TYPE, CALL_STATUS } from "./app/module/Call/call.interface";
 import AppError from "./app/errors/AppError";
+import { registerSocketServer } from "./app/utils/socketRegistry";
 
 interface ConnectedUser {
   socketId: string;
   userId: string;
 }
 
-const isValidObjectIdString = (value: unknown): value is string =>
-  typeof value === "string" && Types.ObjectId.isValid(value);
+const isValidObjectIdString = (value: unknown): value is string => typeof value === "string" && Types.ObjectId.isValid(value);
 
 const extractId = (value: unknown): string | undefined => {
   if (isValidObjectIdString(value)) return value;
@@ -27,17 +27,13 @@ const extractId = (value: unknown): string | undefined => {
 };
 
 /** Id of a populated ref or a raw ObjectId, as a string. */
-const refId = (value: unknown): string =>
-  String((value as { _id?: unknown })?._id ?? value);
+const refId = (value: unknown): string => String((value as { _id?: unknown })?._id ?? value);
 
 export const socketServer = (server: HttpServer): SocketIoServer => {
   const io = new SocketIoServer(server, {
     pingTimeout: 60000,
     cors: {
-      origin: [
-        "http://localhost:3000",
-        "https://traveltipsdestinationcommunity.vercel.app",
-      ],
+      origin: ["http://localhost:3000", "https://traveltipsdestinationcommunity.vercel.app"],
       methods: ["GET", "POST"],
       credentials: true,
     },
@@ -48,8 +44,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
   // from client-sent payloads (which previously allowed any anonymous
   // client to `setup` into any user's room and eavesdrop).
   io.use((socket, next) => {
-    const raw: unknown =
-      socket.handshake.auth?.token ?? socket.handshake.headers?.authorization;
+    const raw: unknown = socket.handshake.auth?.token ?? socket.handshake.headers?.authorization;
 
     if (typeof raw !== "string" || raw.length === 0) {
       return next(new Error("Authentication required"));
@@ -76,9 +71,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
 
   const broadcastOnlineUsers = (): void => {
     // Deduplicated: one entry per user id even with multiple sockets.
-    io.emit("online users", [
-      ...new Set(connectedUsers.map((user) => user.userId)),
-    ]);
+    io.emit("online users", [...new Set(connectedUsers.map((user) => user.userId))]);
   };
 
   io.on("connection", (socket: Socket) => {
@@ -98,9 +91,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
 
     // Allow clients to explicitly ask for the presence list.
     socket.on("get online users", () => {
-      socket.emit("online users", [
-        ...new Set(connectedUsers.map((user) => user.userId)),
-      ]);
+      socket.emit("online users", [...new Set(connectedUsers.map((user) => user.userId))]);
     });
 
     // Join a chat room only after verifying membership in the database —
@@ -183,9 +174,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
 
       const messageType =
         typeof message.messageType === "string" &&
-        ["TEXT", "IMAGE", "VOICE", "LOCATION", "EMOJI", "VIEW_ONCE_IMAGE", "LIVE_LOCATION"].includes(
-          message.messageType,
-        )
+        ["TEXT", "IMAGE", "VOICE", "LOCATION", "EMOJI", "VIEW_ONCE_IMAGE", "LIVE_LOCATION"].includes(message.messageType)
           ? message.messageType
           : "TEXT";
 
@@ -203,22 +192,14 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
       if (messageType === "TEXT" && content.trim().length === 0) {
         return;
       }
-      if (
-        (messageType === "IMAGE" ||
-          messageType === "VOICE" ||
-          messageType === "VIEW_ONCE_IMAGE") &&
-        !hasMedia
-      ) {
+      if ((messageType === "IMAGE" || messageType === "VOICE" || messageType === "VIEW_ONCE_IMAGE") && !hasMedia) {
         return;
       }
       if (messageType === "LOCATION" || messageType === "LIVE_LOCATION") {
         if (!hasLocation) return;
         // Live shares are tracked by their id — without it recipients could
         // never receive position patches.
-        if (
-          messageType === "LIVE_LOCATION" &&
-          !extractId((newMessageReceived as { _id?: unknown })._id)
-        ) {
+        if (messageType === "LIVE_LOCATION" && !extractId((newMessageReceived as { _id?: unknown })._id)) {
           return;
         }
       }
@@ -263,11 +244,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
                 name: typeof sender?.name === "string" ? sender.name : "",
                 image: typeof sender?.image === "string" ? sender.image : null,
               },
-              content: parent.isDeleted
-                ? ""
-                : typeof parent.content === "string"
-                  ? parent.content.slice(0, 300)
-                  : "",
+              content: parent.isDeleted ? "" : typeof parent.content === "string" ? parent.content.slice(0, 300) : "",
               messageType: parent.messageType ?? "TEXT",
               isDeleted: Boolean(parent.isDeleted),
             };
@@ -278,9 +255,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
         // instead of trusting anything the client relays.
         let liveLocation: { expiresAt: string } | null = null;
         if (messageType === "LIVE_LOCATION") {
-          const doc = await Message.findById(
-            extractId((newMessageReceived as { _id?: unknown })._id),
-          )
+          const doc = await Message.findById(extractId((newMessageReceived as { _id?: unknown })._id))
             .select("liveLocation")
             .lean();
           if (doc?.liveLocation?.expiresAt) {
@@ -301,12 +276,8 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
           messageType,
           content,
           mediaUrl: messageType === "VIEW_ONCE_IMAGE" ? null : hasMedia ? message.mediaUrl : null,
-          mediaMeta:
-            messageType === "VOICE" || messageType === "IMAGE" ? message.mediaMeta ?? null : null,
-          location:
-            messageType === "LOCATION" || messageType === "LIVE_LOCATION"
-              ? message.location
-              : null,
+          mediaMeta: messageType === "VOICE" || messageType === "IMAGE" ? (message.mediaMeta ?? null) : null,
+          location: messageType === "LOCATION" || messageType === "LIVE_LOCATION" ? message.location : null,
           liveLocation,
           replyTo,
           createdAt: (newMessageReceived as { createdAt?: unknown }).createdAt ?? new Date().toISOString(),
@@ -337,9 +308,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
       return true;
     };
 
-    const normalizeLiveLocation = (
-      raw: unknown,
-    ): { lat: number; lng: number; label?: string } | null => {
+    const normalizeLiveLocation = (raw: unknown): { lat: number; lng: number; label?: string } | null => {
       if (typeof raw !== "object" || raw === null) return null;
       const loc = raw as { lat?: unknown; lng?: unknown; label?: unknown };
       if (typeof loc.lat !== "number" || typeof loc.lng !== "number") return null;
@@ -351,7 +320,9 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
       };
     };
 
-    const liveShareTarget = (payload: unknown): {
+    const liveShareTarget = (
+      payload: unknown,
+    ): {
       messageId: string;
       chatId: string;
     } | null => {
@@ -368,9 +339,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
     socket.on("live:update", async (payload: unknown) => {
       const target = liveShareTarget(payload);
       if (!target || !withinLiveLocationBudget()) return;
-      const location = normalizeLiveLocation(
-        (payload as { location?: unknown }).location,
-      );
+      const location = normalizeLiveLocation((payload as { location?: unknown }).location);
       if (!location) return;
 
       try {
@@ -386,13 +355,11 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
           { $set: { location } },
         );
         if (updated.modifiedCount !== 1) return;
-        socket
-          .to(target.chatId)
-          .emit("live:position", {
-            messageId: target.messageId,
-            chat: target.chatId,
-            location,
-          });
+        socket.to(target.chatId).emit("live:position", {
+          messageId: target.messageId,
+          chat: target.chatId,
+          location,
+        });
       } catch {
         // Malformed id or DB error → drop the event.
       }
@@ -500,23 +467,15 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
         return emitCallError("Too many call attempts, please try again later");
       }
 
-      const mediaType =
-        body?.mediaType === CALL_MEDIA_TYPE.VIDEO
-          ? CALL_MEDIA_TYPE.VIDEO
-          : CALL_MEDIA_TYPE.AUDIO;
+      const mediaType = body?.mediaType === CALL_MEDIA_TYPE.VIDEO ? CALL_MEDIA_TYPE.VIDEO : CALL_MEDIA_TYPE.AUDIO;
 
       try {
-        const call = await CallServices.inviteToCallFromDB(
-          chatId,
-          mediaType,
-          { id: userId, role: "USER" },
-        );
+        const call = await CallServices.inviteToCallFromDB(chatId, mediaType, { id: userId, role: "USER" });
         const callId = String(call._id);
         socket.join(`call:${callId}`);
 
         const participants = (call.participants ?? []).map((p) => refId(p));
-        const chatUsers =
-          ((call.chat as unknown as { users?: unknown[] })?.users ?? []);
+        const chatUsers = (call.chat as unknown as { users?: unknown[] })?.users ?? [];
         socket.emit("call:outgoing", {
           callId,
           chatId,
@@ -553,28 +512,17 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
         // group call joins it instead of failing.
         if (error instanceof AppError && error.statusCode === 409) {
           try {
-            const joined = await CallServices.joinActiveGroupCallFromDB(
-              chatId,
-              { id: userId, role: "USER" },
-            );
+            const joined = await CallServices.joinActiveGroupCallFromDB(chatId, { id: userId, role: "USER" });
             if (joined?.isGroupCall) {
-              emitGroupJoin(
-                joined,
-                userId,
-                ((joined.chat as unknown as { users?: unknown[] })?.users ?? []),
-              );
+              emitGroupJoin(joined, userId, (joined.chat as unknown as { users?: unknown[] })?.users ?? []);
               return;
             }
           } catch (inner) {
-            emitCallError(
-              inner instanceof AppError ? inner.message : "Unable to join call",
-            );
+            emitCallError(inner instanceof AppError ? inner.message : "Unable to join call");
             return;
           }
         }
-        emitCallError(
-          error instanceof AppError ? error.message : "Unable to start call",
-        );
+        emitCallError(error instanceof AppError ? error.message : "Unable to start call");
       }
     });
 
@@ -590,11 +538,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
 
         if (call.isGroupCall) {
           // Room entry, roster hand-off and ring cleanup in one place.
-          emitGroupJoin(
-            call,
-            userId,
-            ((call.chat as unknown as { users?: unknown[] })?.users ?? []),
-          );
+          emitGroupJoin(call, userId, (call.chat as unknown as { users?: unknown[] })?.users ?? []);
           return;
         }
 
@@ -604,9 +548,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
           mediaType: call.mediaType,
         });
       } catch (error) {
-        emitCallError(
-          error instanceof AppError ? error.message : "Unable to accept call",
-        );
+        emitCallError(error instanceof AppError ? error.message : "Unable to accept call");
       }
     });
 
@@ -631,9 +573,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
           callId,
         });
       } catch (error) {
-        emitCallError(
-          error instanceof AppError ? error.message : "Unable to reject call",
-        );
+        emitCallError(error instanceof AppError ? error.message : "Unable to reject call");
       }
     });
 
@@ -648,15 +588,9 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
         });
 
         if (call.isGroupCall) {
-          if (
-            call.status === CALL_STATUS.ENDED ||
-            call.status === CALL_STATUS.CANCELLED
-          ) {
+          if (call.status === CALL_STATUS.ENDED || call.status === CALL_STATUS.CANCELLED) {
             // Ring cancelled or the last participant left → reset everyone.
-            const members =
-              ((call.chat as unknown as { users?: unknown[] })?.users ?? []).map(
-                (u) => refId(u),
-              );
+            const members = ((call.chat as unknown as { users?: unknown[] })?.users ?? []).map((u) => refId(u));
             for (const member of members) {
               if (member === userId) continue;
               io.to(member).emit("call:ended", {
@@ -676,19 +610,14 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
           return;
         }
 
-        const other =
-          refId(call.caller) === userId
-            ? refId(call.callee)
-            : refId(call.caller);
+        const other = refId(call.caller) === userId ? refId(call.callee) : refId(call.caller);
         io.to(other).emit("call:ended", {
           callId,
           status: call.status,
           durationSeconds: call.durationSeconds,
         });
       } catch (error) {
-        emitCallError(
-          error instanceof AppError ? error.message : "Unable to end call",
-        );
+        emitCallError(error instanceof AppError ? error.message : "Unable to end call");
       }
     });
 
@@ -704,26 +633,19 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
       };
       const callId = extractId(body?.callId);
       const kind = body?.kind;
-      if (
-        !callId ||
-        (kind !== "offer" && kind !== "answer" && kind !== "candidate")
-      ) {
+      if (!callId || (kind !== "offer" && kind !== "answer" && kind !== "candidate")) {
         return;
       }
 
       // Size caps: an SDP blob or ICE candidate is small; anything larger is abuse.
       const sdp = typeof body.sdp === "string" && body.sdp.length <= 100_000 ? body.sdp : undefined;
-      const candidate =
-        typeof body.candidate === "string" && body.candidate.length <= 10_000
-          ? body.candidate
-          : undefined;
+      const candidate = typeof body.candidate === "string" && body.candidate.length <= 10_000 ? body.candidate : undefined;
       if (kind !== "candidate" && sdp === undefined) {
         return;
       }
 
       try {
-        const { caller, callee, isGroupCall, participants } =
-          await CallServices.assertLiveCallParticipant(callId, userId);
+        const { caller, callee, isGroupCall, participants } = await CallServices.assertLiveCallParticipant(callId, userId);
 
         if (isGroupCall) {
           // Mesh: address one live participant of this call; roster enforced
@@ -757,9 +679,7 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
     });
 
     socket.on("disconnect", () => {
-      const index = connectedUsers.findIndex(
-        (user) => user.socketId === socket.id,
-      );
+      const index = connectedUsers.findIndex((user) => user.socketId === socket.id);
 
       if (index !== -1) {
         connectedUsers.splice(index, 1);
@@ -767,6 +687,9 @@ export const socketServer = (server: HttpServer): SocketIoServer => {
       }
     });
   });
+
+  // Register socket server in global registry for service-level real-time events
+  registerSocketServer(io);
 
   return io;
 };

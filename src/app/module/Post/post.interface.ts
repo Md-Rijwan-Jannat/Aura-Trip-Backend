@@ -1,10 +1,5 @@
 import { Document, Types } from "mongoose";
-import {
-  POST_STATUS,
-  TCommentHighlightMode,
-  TCommentSortMode,
-  TMediaLayout,
-} from "./post.constants";
+import { POST_STATUS, TCommentHighlightMode, TCommentSortMode, TMediaLayout } from "./post.constants";
 
 export type TCategoryType =
   | "Adventure"
@@ -55,6 +50,8 @@ export interface TPost extends Document {
   /** Edited marker for the caption/media. */
   isEdited?: boolean;
   editedAt?: Date | null;
+  featuredCommentId?: Types.ObjectId | null;
+  featuredCommentMode?: "AUTOMATIC" | "MANUAL";
   /** Pinned to the author's profile — at most ONE per author. */
   pinned?: boolean;
   pinnedAt?: Date | null;

@@ -18,25 +18,13 @@ router.post(
 );
 
 // Get comments for a post
-router.get(
-  "/all-comments",
-  Auth(USER_ROLE.ADMIN),
-  CommentControllers.getAllComment,
-);
+router.get("/all-comments", Auth(USER_ROLE.ADMIN), CommentControllers.getAllComment);
 
 // Get comments for a short
-router.get(
-  "/short/:shortId",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  CommentControllers.getCommentsForShort,
-);
+router.get("/short/:shortId", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), CommentControllers.getCommentsForShort);
 
 // Get comments for a post
-router.get(
-  "/:postId",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  CommentControllers.getCommentForPost,
-);
+router.get("/:postId", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), CommentControllers.getCommentForPost);
 
 // Update a comment
 router.patch(
@@ -47,11 +35,7 @@ router.patch(
 );
 
 // Delete a comment
-router.delete(
-  "/:id",
-  Auth(USER_ROLE.USER, USER_ROLE.ADMIN),
-  CommentControllers.deleteComment,
-);
+router.delete("/:id", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), CommentControllers.deleteComment);
 
 // Reply to a comment
 router.post(
@@ -61,5 +45,8 @@ router.post(
   validateRequest(CommentValidation.replyValidationSchema),
   CommentControllers.replyToComment,
 );
+
+// Set or remove highlighted comment (post owner only)
+router.post("/highlight/:postId", Auth(USER_ROLE.USER, USER_ROLE.ADMIN), CommentControllers.setHighlightedComment);
 
 export const CommentRoutes = router;

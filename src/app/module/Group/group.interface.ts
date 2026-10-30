@@ -102,6 +102,8 @@ export interface IShort extends Document {
   viewCount: number;
   views: Types.ObjectId[];
   reportCount: number;
+  featuredCommentId?: Types.ObjectId | null;
+  featuredCommentMode?: "AUTOMATIC" | "MANUAL";
   isDeleted: boolean;
   createdAt: Date;
   updatedAt: Date;

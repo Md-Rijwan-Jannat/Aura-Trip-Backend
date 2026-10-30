@@ -562,12 +562,73 @@ const replyToCommentFromDB = async (
   return reply;
 };
 
+const setHighlightedCommentIntoDB = async (
+  postId: string,
+  commentId: string | null,
+  requester: TRequester,
+): Promise<{ postId: string; commentId: string | null; mode: "MANUAL" | "AUTOMATIC" }> => {
+  const post = await Post.findById(postId);
+  if (!post || post.isDeleted) {
+    throw new AppError(httpStatus.NOT_FOUND, "Post not found");
+  }
+
+  // Only post owner can set highlighted comments
+  if (String(post.user) !== requester.id && requester.role !== "ADMIN") {
+    throw new AppError(httpStatus.FORBIDDEN, "Only the post owner can highlight comments");
+  }
+
+  if (commentId) {
+    // Setting a highlighted comment
+    const comment = await Comment.findById(commentId);
+    if (!comment || comment.isDeleted) {
+      throw new AppError(httpStatus.NOT_FOUND, "Comment not found");
+    }
+
+    // Comment must belong to this post
+    if (String(comment.post) !== postId) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Comment does not belong to this post");
+    }
+
+    // Comment must be top-level (not a reply)
+    if (comment.parentComment) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Cannot highlight replies, only top-level comments");
+    }
+
+    // Update post with manual highlight
+    await Post.updateOne(
+      { _id: postId },
+      {
+        $set: {
+          featuredCommentId: commentId,
+          featuredCommentMode: "MANUAL",
+        },
+      },
+    );
+
+    return { postId, commentId, mode: "MANUAL" };
+  } else {
+    // Removing highlighted comment (back to automatic)
+    await Post.updateOne(
+      { _id: postId },
+      {
+        $set: {
+          featuredCommentId: null,
+          featuredCommentMode: "AUTOMATIC",
+        },
+      },
+    );
+
+    return { postId, commentId: null, mode: "AUTOMATIC" };
+  }
+};
+
 export const CommentService = {
   addCommentIntoDB,
   getAllCommentFromDB,
   getCommentForPostFromDB,
-  getCommentsForShortFromDB,
   updateCommentIntoDB,
   deleteCommentFromDB,
   replyToCommentFromDB,
+  getCommentsForShortFromDB,
+  setHighlightedCommentIntoDB,
 };

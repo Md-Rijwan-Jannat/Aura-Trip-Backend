@@ -541,4 +541,18 @@ export const NotificationCreators = {
       dedupe: true,
     });
   },
+
+  // Post sharing notification
+  postShared: async (postOwnerId: string, sharerId: string, sharerName: string, postId: string) => {
+    return createNotification({
+      recipient: postOwnerId,
+      actorId: sharerId,
+      actorName: sharerName,
+      type: "POST_SHARED" as TNotificationType,
+      entityType: "post",
+      entityId: postId,
+      link: `/posts/${postId}`,
+      dedupe: true,
+    });
+  },
 };

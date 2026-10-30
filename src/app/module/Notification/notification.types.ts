@@ -17,6 +17,7 @@ export const NOTIFICATION_TYPE = {
   POST_COMMENT: "POST_COMMENT",
   POST_COMMENT_REPLY: "POST_COMMENT_REPLY",
   POST_COMMENT_REACTION: "POST_COMMENT_REACTION",
+  POST_SHARED: "POST_SHARED",
 
   // Shorts
   SHORT_LIKE: "SHORT_LIKE",
@@ -83,6 +84,7 @@ export const NOTIFICATION_TYPE_CATEGORY: Record<TNotificationType, TNotification
   [NOTIFICATION_TYPE.POST_COMMENT]: NOTIFICATION_CATEGORY.COMMENTS,
   [NOTIFICATION_TYPE.POST_COMMENT_REPLY]: NOTIFICATION_CATEGORY.COMMENTS,
   [NOTIFICATION_TYPE.POST_COMMENT_REACTION]: NOTIFICATION_CATEGORY.COMMENTS,
+  [NOTIFICATION_TYPE.POST_SHARED]: NOTIFICATION_CATEGORY.POSTS,
   [NOTIFICATION_TYPE.SHORT_LIKE]: NOTIFICATION_CATEGORY.SHORTS,
   [NOTIFICATION_TYPE.SHORT_REACTION]: NOTIFICATION_CATEGORY.SHORTS,
   [NOTIFICATION_TYPE.SHORT_COMMENT]: NOTIFICATION_CATEGORY.SHORTS,
@@ -125,6 +127,7 @@ export const NOTIFICATION_TITLES: Record<TNotificationType, (actorName?: string,
   [NOTIFICATION_TYPE.POST_COMMENT_REPLY]: (_actorName = "Someone") => `${_actorName} replied to your comment`,
   [NOTIFICATION_TYPE.POST_COMMENT_REACTION]: (_actorName = "Someone", _extra?: string) =>
     `${_actorName} reacted to your comment${_extra ? ` with ${_extra}` : ""}`,
+  [NOTIFICATION_TYPE.POST_SHARED]: (_actorName = "Someone") => `${_actorName} shared your post`,
   [NOTIFICATION_TYPE.SHORT_LIKE]: (_actorName = "Someone") => `${_actorName} liked your short`,
   [NOTIFICATION_TYPE.SHORT_REACTION]: (_actorName = "Someone", _extra?: string) =>
     `${_actorName} reacted to your short${_extra ? ` with ${_extra}` : ""}`,
